@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ r.name }}{% endblock %}
+{% block content %}
+<div class="navbar"><div class="navbar-inner">
+  <a href="{{ url_for('landing') }}" class="brand">{{ r.logo_emoji }} {{ r.name }}</a>
+  <div class="nav-links">
+    <a href="{{ url_for('admin') }}" class="tab active">Admin</a>
+    <a href="{{ url_for('kitchen') }}" class="tab">🔔 Kitchen</a>
+    <a href="{{ url_for('runner') }}" class="tab">🏃 Runner</a>
+    <a href="{{ url_for('take_order') }}" class="tab">🙋 Take Order</a>
+    <a href="{{ url_for('sections') }}" class="tab">🗂️ Sections</a>
+    <a href="{{ url_for('admin_analytics') }}" class="tab">📊 Analytics</a>
+    <a href="{{ url_for('billing') }}" class="tab">💳 Billing</a>
+    <a href="{{ url_for('logout') }}" class="tab">Log out</a>
+  </div>
+</div></div>
+
+<div class="container" style="padding: 28px 20px 60px;">
+
+  {% if billing_state.status == 'trialing' and not billing_state.trial_expired and billing_state.trial_days_left <= 3 %}
+  <div class="flash" style="background:#fef3c7; color:#92400e; display:flex; justify-content:space-between; align-items:center;">
+    <span>⏳ Your free trial ends in {{ billing_state.trial_days_left }} day{{ 's' if billing_state.trial_days_left != 1 }}.</span>
+    <a href="{{ url_for('billing') }}" class="btn btn-sm" style="background:#92400e; color:white;">Choose a Plan</a>
+  </div>
+  {% elif billing_state.status == 'trialing' and billing_state.trial_expired %}
+  <div class="flash flash-error" style="display:flex; justify-content:space-between; align-items:center;">
+    <span>🔒 Your free trial has ended. Menu/table editing is paused until you choose a plan.</span>
+    <a href="{{ url_for('billing') }}" class="btn btn-sm btn-danger">Choose a Plan</a>
+  </div>
+  {% elif billing_state.status == 'past_due' %}
+  <div class="flash flash-error" style="display:flex; justify-content:space-between; align-items:center;">
+    <span>
+      ⚠️ Your last payment failed.
+      {% if billing_state.hard_locked %}Kitchen/Runner screens are paused.{% else %}{{ billing_state.grace_days_left }} day{{ 's' if billing_state.grace_days_left != 1 }} left before service is paused.{% endif %}
+    </span>
+    <a href="{{ url_for('billing') }}" class="btn btn-sm btn-danger">Fix Payment</a>
+  </div>
+  {% endif %}
+
+  <div class="grid-3" style="margin-bottom: 10px;">
+    <div class="card">
+      <div class="muted" style="font-size:13px; font-weight:700; text-transform:uppercase;">Today's Orders</div>
+      <div style="font-size:30px; font-weight:800;">{{ today_count }}</div>
+    </div>
+    <div class="card">
+      <div class="muted" style="font-size:13px; font-weight:700; text-transform:uppercase;">Today's Revenue</div>
+      <div style="font-size:30px; font-weight:800;">${{ "%.2f"|format(today_revenue) }}</div>
+    </div>
+    <div class="card">
+      <div class="muted" style="font-size:13px; font-weight:700; text-transform:uppercase;">Current Plan</div>
+      <div style="font-size:30px; font-weight:800; text-transform:capitalize;">{{ r.plan }}</div>
+    </div>
+  </div>
+
+  {% if top_items_today %}
+  <div class="section-title">Top Sellers Today</div>
+  <div class="card">
+    {% for item in top_items_today %}
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; {{ 'border-bottom:1px solid var(--border);' if not loop.last }}">
+      <div><strong>#{{ loop.index }}</strong> &nbsp; {{ item.name }}</div>
+      <div style="font-weight:800; color:var(--orange-dark);">{{ item.total_quantity }}×</div>
+    </div>
+    {% endfor %}
+    <a href="{{ url_for('admin_analytics') }}" class="btn btn-outline btn-sm" style="margin-top:12px; display:inline-block;">View Full Analytics →</a>
+  </div>
+  {% endif %}
+
+  <div class="section-title">Business Profile</div>
+  <div class="card">
+    <form method="POST" action="{{ url_for('admin_profile') }}">
+      <div class="grid-3">
+        <div class="field">
+          <label>Restaurant Name</label>
+          <input type="text" name="name" value="{{ r.name }}">
+        </div>
+        <div class="field">
+          <label>Logo Emoji</label>
+          <input type="text" name="logo_emoji" value="{{ r.logo_emoji }}" maxlength="4">
+        </div>
+        <div class="field">
+          <label>Your Order Link Base</label>
+          <input type="text" value="{{ request.url_root }}order/{{ r.slug }}/[table]" readonly style="background:#f5f5f5; color:var(--gray);">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-outline btn-sm">Save Profile</button>
+    </form>
+  </div>
+
+  <div class="section-title">Tables & QR Codes ({{ tables|length }} / {{ table_limit }} used on {{ r.plan }} plan)</div>
+  <div class="card">
+    <form method="POST" action="{{ url_for('admin_table_add') }}" style="display:flex; gap:10px; margin-bottom:20px; align-items:flex-end;">
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <label>New Table Number</label>
+        <input type="text" name="number" placeholder="e.g. 12" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add Table</button>
+    </form>
+    <div class="grid-3">
+      {% for tq in tables %}
+      <div class="card" style="text-align:center;">
+        <div style="font-weight:800; font-size:16px; margin-bottom:8px;">Table {{ tq.table.number }}</div>
+        <img src="data:image/png;base64,{{ tq.qr_b64 }}" style="width:140px; height:140px;">
+        <div class="muted" style="font-size:11px; word-break:break-all; margin:8px 0;">{{ tq.url }}</div>
+        <a href="{{ tq.url }}" target="_blank" class="btn btn-outline btn-sm" style="width:100%; margin-bottom:6px;">Open / Test</a>
+        <form method="POST" action="{{ url_for('admin_table_delete', table_id=tq.table.id) }}">
+          <button type="submit" class="btn btn-danger btn-sm" style="width:100%;">Remove Table</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="section-title">Menu Items</div>
+  <div class="card">
+    <form method="POST" action="{{ url_for('admin_menu_add') }}" style="margin-bottom:24px;">
+      <div class="grid-2">
+        <div class="field">
+          <label>Item Name</label>
+          <input type="text" name="name" required>
+        </div>
+        <div class="field">
+          <label>Category</label>
+          <input type="text" name="category" placeholder="Starters / Main Course / Beverages / Desserts" value="Main Course">
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Price (USD)</label>
+          <input type="number" step="0.01" name="price" required>
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <input type="text" name="description">
+        </div>
+      </div>
+      <div class="field">
+        <label>Does the kitchen need to prepare/cook this?</label>
+        <select name="needs_prep">
+          <option value="yes">Yes — kitchen makes it (food, cooked items, made-to-order drinks)</option>
+          <option value="no">No — already available/stocked (water, fountain drinks, bread basket)</option>
+        </select>
+        <div class="muted" style="font-size:12px; margin-top:4px;">
+          This controls what happens when a customer asks for "more" of this item: "Yes" sends it
+          to the kitchen with a wait time, "No" sends it straight to the runner instantly.
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add Menu Item</button>
+    </form>
+
+    {% set ns = namespace(cat="") %}
+    {% for item in items %}
+      {% if item.category != ns.cat %}
+        {% set ns.cat = item.category %}
+        <div style="font-weight:800; margin: 18px 0 8px; color:var(--orange-dark);">{{ item.category }}</div>
+      {% endif %}
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
+        <div>
+          <strong>{{ item.name }}</strong> — ${{ "%.2f"|format(item.price) }}
+          {% if not item.available %}<span class="badge badge-received">Unavailable</span>{% endif %}
+          {% if item.needs_prep %}
+            <span class="badge badge-preparing">Kitchen-made</span>
+          {% else %}
+            <span class="badge badge-ready">Instant refill</span>
+          {% endif %}
+          <div class="muted" style="font-size:13px;">{{ item.description }}</div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <form method="POST" action="{{ url_for('admin_menu_toggle_prep', item_id=item.id) }}">
+            <button type="submit" class="btn btn-outline btn-sm">{{ "Mark Instant" if item.needs_prep else "Mark Kitchen-made" }}</button>
+          </form>
+          <form method="POST" action="{{ url_for('admin_menu_toggle', item_id=item.id) }}">
+            <button type="submit" class="btn btn-outline btn-sm">{{ "Enable" if not item.available else "Disable" }}</button>
+          </form>
+          <form method="POST" action="{{ url_for('admin_menu_delete', item_id=item.id) }}">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </div>
+      </div>
+
+    {% else %}
+      <p class="muted">No menu items yet — add your first one above.</p>
+    {% endfor %}
+  </div>
+
+  <div class="section-title">Subscription Plan</div>
+  <div class="card">
+    <p class="muted">Change your plan (in a live product this would go through Stripe/Dodo Payments checkout).</p>
+    <form method="POST" action="{{ url_for('admin_plan') }}" style="display:flex; gap:10px; align-items:flex-end;">
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <select name="plan">
+          <option value="starter" {{ "selected" if r.plan=="starter" }}>Starter — ${{ plan_prices.starter }}/mo (10 tables)</option>
+          <option value="growth" {{ "selected" if r.plan=="growth" }}>Growth — ${{ plan_prices.growth }}/mo (25 tables)</option>
+          <option value="pro" {{ "selected" if r.plan=="pro" }}>Pro — ${{ plan_prices.pro }}/mo (unlimited)</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Update Plan</button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

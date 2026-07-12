@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Runner Screen - {{ r.name }}</title>
+<style>
+  :root { --orange:#ff6b35; --dark:#26262b; --gray:#6b7280; --border:#ececec; --green:#16a34a; --blue:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f4f4f4; color:var(--dark); }
+  .topbar { background: var(--dark); color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:20; flex-wrap:wrap; gap:8px;}
+  .topbar .brand { font-weight:800; font-size:18px; }
+  .topbar a { color:#d1d5db; text-decoration:none; font-weight:600; font-size:14px; margin-left:16px;}
+  .topbar a.active { color: var(--orange); }
+  .name-badge { background:#3f3f46; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer; font-size:13px;}
+  .list { max-width: 640px; margin: 0 auto; padding: 20px; }
+  .section-label { font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.05em; color:var(--gray); margin: 18px 0 10px; }
+  .runner-card { background:white; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,0.06); border-left: 6px solid var(--green); }
+  .runner-card.request { border-left-color: var(--blue); }
+  .runner-card.claimed-by-me { border-left-color: #a855f7; background: #faf5ff; }
+  .runner-card.claimed-by-other { opacity: 0.65; }
+  .runner-card.new-flash { animation: flash 1s ease 3; }
+  @keyframes flash { 0%,100% { background:white; } 50% { background:#eef4ff; } }
+  .card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .table-num { font-weight:900; font-size:24px; }
+  .items-summary { color:var(--gray); font-size:14px; margin-top:4px; }
+  .req-icon-big { font-size: 20px; margin-right:6px; }
+  .waiting-badge { font-size:12px; color:#b45309; font-weight:700; margin-top:6px; }
+  .claim-status { font-size:13px; font-weight:700; margin-top:10px; padding:6px 10px; border-radius:8px; display:inline-block; }
+  .claim-status.mine { background:#f3e8ff; color:#7e22ce; }
+  .claim-status.other { background:#fef3c7; color:#92400e; }
+  .btn-row { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .btn { border:none; padding:11px 18px; border-radius:10px; font-weight:800; cursor:pointer; font-size:14px; }
+  .btn-claim { background: var(--dark); color:white; }
+  .btn-done { background: var(--green); color:white; }
+  .btn-resolve { background: var(--blue); color:white; }
+  .btn-takeover { background:#fef3c7; color:#92400e; }
+  .btn-release { background:#f3f4f6; color:var(--gray); }
+  .empty-state { text-align:center; padding:50px 20px; color:var(--gray); }
+  .empty-state .icn { font-size:40px; margin-bottom:8px; }
+
+  .name-modal-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center;
+    justify-content:center; z-index:100;
+  }
+  .name-modal { background:white; border-radius:16px; padding:26px; max-width:340px; width:90%; text-align:center; }
+  .name-modal input { width:100%; padding:12px; border:1.5px solid var(--border); border-radius:10px; font-size:16px; margin:14px 0; box-sizing:border-box; }
+  .name-modal button { width:100%; background:var(--orange); color:white; border:none; padding:13px; border-radius:10px; font-weight:800; font-size:15px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div class="name-modal-overlay" id="nameModal" style="display:none;">
+  <div class="name-modal">
+    <h3 style="margin-top:0;">Who's working this device?</h3>
+    <p style="color:var(--gray); font-size:14px;">Enter your name so your teammates know who's handling each table.</p>
+    <input type="text" id="nameInput" placeholder="e.g. Priya">
+    <button onclick="saveName()">Start Runner Screen</button>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="brand">🏃 {{ r.name }} — Runner</div>
+  <div style="display:flex; align-items:center;">
+    <a href="{{ url_for('admin') }}">Admin</a>
+    <a href="{{ url_for('kitchen') }}">Kitchen</a>
+    <a href="{{ url_for('runner') }}" class="active">Runner</a>
+    <a href="{{ url_for('take_order') }}">🙋 Take Order</a>
+    <a href="{{ url_for('sections') }}">🗂️ Sections</a>
+    <a href="{{ url_for('admin_analytics') }}">📊 Analytics</a>
+    <a href="{{ url_for('billing') }}">💳 Billing</a>
+    <button class="name-badge" onclick="changeName()" id="nameBadge">👤 Set Name</button>
+  </div>
+</div>
+
+<div class="list">
+  <div class="section-label">🙋 Table Requests (Refills, Napkins, Assistance)</div>
+  <div id="requestsList">
+    <div class="empty-state" id="requestsEmpty"><div class="icn">👍</div>No open requests right now.</div>
+  </div>
+
+  <div class="section-label">✅ Food Ready for Delivery</div>
+  <div id="ordersList">
+    <div class="empty-state" id="ordersEmpty"><div class="icn">🍽️</div>No orders ready right now.</div>
+  </div>
+</div>
+
+<script>
+  let knownOrderIds = new Set();
+  let knownRequestIds = new Set();
+  let firstLoad = true;
+
+  // --- Name handling (per-device, stored locally, no login needed) ---
+  function getName() { return localStorage.getItem('tablebell_runner_name') || ''; }
+  function setName(name) {
+    localStorage.setItem('tablebell_runner_name', name);
+    document.getElementById('nameBadge').textContent = '👤 ' + name;
+  }
+  function ensureName() {
+    const name = getName();
+    if (!name) {
+      document.getElementById('nameModal').style.display = 'flex';
+    } else {
+      document.getElementById('nameBadge').textContent = '👤 ' + name;
+    }
+  }
+  function saveName() {
+    const val = document.getElementById('nameInput').value.trim();
+    if (!val) { alert('Please enter your name'); return; }
+    setName(val);
+    document.getElementById('nameModal').style.display = 'none';
+  }
+  function changeName() {
+    document.getElementById('nameInput').value = getName();
+    document.getElementById('nameModal').style.display = 'flex';
+  }
+
+  function playTone(freqs) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      freqs.forEach((freq, idx) => {
+        setTimeout(() => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.25, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(ctx.currentTime + 0.4);
+        }, idx * 250);
+      });
+    } catch (e) { console.log('Audio not available', e); }
+  }
+  function playReadyBell() { playTone([880, 1046, 1318]); }
+  function playRequestChime() { playTone([660, 660]); }
+
+  function claimBlockHtml(kind, id, claimedBy) {
+    const myName = getName();
+    if (!claimedBy) {
+      // No section assignment for this table AND nobody has claimed it yet -
+      // first person to tap this gets it.
+      return `<div class="claim-status other" style="background:#fee2e2; color:#991b1b;">⚠️ Unassigned table</div><div class="btn-row"><button class="btn btn-claim" onclick="claim('${kind}', ${id})">🙋 I'll Take This</button></div>`;
+    } else if (claimedBy === myName) {
+      const doneBtn = kind === 'order'
+        ? `<button class="btn btn-done" onclick="markDelivered(${id})">Mark Delivered ✓</button>`
+        : `<button class="btn btn-resolve" onclick="resolveRequest(${id})">Resolved ✓</button>`;
+      return `<div class="claim-status mine">✅ Your Table</div><div class="btn-row">${doneBtn}<button class="btn btn-release" onclick="release('${kind}', ${id})">Not Me / Release</button></div>`;
+    } else {
+      return `<div class="claim-status other">🔒 ${claimedBy}'s Table</div><div class="btn-row"><button class="btn btn-takeover" onclick="takeover('${kind}', ${id})">Cover For Them</button></div>`;
+    }
+  }
+
+  function renderRequests(requests) {
+    const list = document.getElementById('requestsList');
+    const empty = document.getElementById('requestsEmpty');
+    const currentIds = new Set(requests.map(r => r.id));
+    const isNew = [...currentIds].filter(id => !knownRequestIds.has(id));
+    if (!firstLoad && isNew.length > 0) playRequestChime();
+    knownRequestIds = currentIds;
+
+    if (requests.length === 0) { list.innerHTML = ''; list.appendChild(empty); return; }
+
+    list.innerHTML = '';
+    requests.forEach(req => {
+      const waitedMin = Math.floor(req.seconds_since / 60);
+      const myName = getName();
+      let cardClass = 'runner-card request';
+      if (isNew.includes(req.id)) cardClass += ' new-flash';
+      if (req.claimed_by === myName) cardClass += ' claimed-by-me';
+      else if (req.claimed_by) cardClass += ' claimed-by-other';
+
+      const card = document.createElement('div');
+      card.className = cardClass;
+      const noteHtml = req.note ? `<div class="items-summary">"${req.note}"</div>` : '';
+      card.innerHTML = `
+        <div class="card-top">
+          <div>
+            <div class="table-num"><span class="req-icon-big">${req.icon}</span>Table ${req.table_number}</div>
+            <div class="items-summary">${req.label}</div>
+            ${noteHtml}
+            <div class="waiting-badge">${waitedMin < 1 ? 'just now' : waitedMin + ' min ago'}</div>
+          </div>
+        </div>
+        ${claimBlockHtml('request', req.id, req.claimed_by)}
+      `;
+      list.appendChild(card);
+    });
+  }
+
+  function renderOrders(orders) {
+    const list = document.getElementById('ordersList');
+    const empty = document.getElementById('ordersEmpty');
+    const currentIds = new Set(orders.map(o => o.id));
+    const isNew = [...currentIds].filter(id => !knownOrderIds.has(id));
+    if (!firstLoad && isNew.length > 0) playReadyBell();
+    knownOrderIds = currentIds;
+
+    if (orders.length === 0) { list.innerHTML = ''; list.appendChild(empty); return; }
+
+    list.innerHTML = '';
+    orders.forEach(o => {
+      const itemsText = o.items.map(i => `${i.quantity}× ${i.name}`).join(', ');
+      const waitedMin = Math.floor(o.seconds_since_order / 60);
+      const myName = getName();
+      let cardClass = 'runner-card';
+      if (isNew.includes(o.id)) cardClass += ' new-flash';
+      if (o.claimed_by === myName) cardClass += ' claimed-by-me';
+      else if (o.claimed_by) cardClass += ' claimed-by-other';
+
+      const card = document.createElement('div');
+      card.className = cardClass;
+      card.innerHTML = `
+        <div class="card-top">
+          <div>
+            <div class="table-num">Table ${o.table_number}</div>
+            <div class="items-summary">${itemsText}</div>
+            <div class="waiting-badge">Ready — waiting ${waitedMin} min total</div>
+          </div>
+        </div>
+        ${claimBlockHtml('order', o.id, o.claimed_by)}
+      `;
+      list.appendChild(card);
+    });
+  }
+
+  function claim(kind, id) {
+    const name = getName();
+    if (!name) { ensureName(); return; }
+    const url = kind === 'order' ? `/api/order/${id}/claim` : `/api/request/${id}/claim`;
+    fetch(url, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    }).then(r => r.json()).then(data => {
+      if (!data.ok) {
+        // someone else claimed it in the split second before us
+        alert('Too slow! ' + data.claimed_by + ' just claimed this.');
+      }
+      fetchAll();
+    });
+  }
+
+  function takeover(kind, id) {
+    const name = getName();
+    if (!name) { ensureName(); return; }
+    if (!confirm('Take this over from whoever claimed it?')) return;
+    const url = kind === 'order' ? `/api/order/${id}/takeover` : `/api/request/${id}/takeover`;
+    fetch(url, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    }).then(fetchAll);
+  }
+
+  function release(kind, id) {
+    const url = kind === 'order' ? `/api/order/${id}/unclaim` : `/api/request/${id}/unclaim`;
+    fetch(url, { method: 'POST' }).then(fetchAll);
+  }
+
+  function markDelivered(orderId) {
+    fetch(`/api/order/${orderId}/delivered`, { method: 'POST' }).then(fetchAll);
+  }
+
+  function resolveRequest(requestId) {
+    fetch(`/api/request/${requestId}/resolve`, { method: 'POST' }).then(fetchAll);
+  }
+
+  function fetchAll() {
+    fetch('/api/runner/orders').then(r => r.json()).then(renderOrders);
+    fetch('/api/runner/requests').then(r => r.json()).then(renderRequests);
+    firstLoad = false;
+  }
+
+  ensureName();
+  fetchAll();
+  setInterval(fetchAll, 3000);
+</script>
+</body>
+</html>

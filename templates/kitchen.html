@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kitchen Dashboard — {{ r.name }}</title>
+<style>
+  :root { --orange:#ff6b35; --orange-dark:#e2551f; --dark:#26262b; --gray:#6b7280; --border:#ececec; --green:#16a34a; --blue:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f4f4f4; color:var(--dark); }
+  .topbar { background: var(--dark); color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:10;}
+  .topbar .brand { font-weight:800; font-size:18px; display:flex; align-items:center; gap:8px; }
+  .topbar a { color:#d1d5db; text-decoration:none; font-weight:600; font-size:14px; margin-left:16px;}
+  .topbar a.active { color: var(--orange); }
+  .sound-toggle { background:#3f3f46; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer; font-size:13px;}
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px; padding:20px; }
+  .order-card { background:white; border-radius:14px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,0.06); border-left: 6px solid var(--orange); position:relative; }
+  .order-card.new-flash { animation: flash 1s ease 3; }
+  @keyframes flash { 0%,100% { background:white; } 50% { background:#fff1ea; } }
+  .order-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .table-num { font-weight:900; font-size:20px; }
+  .elapsed { color:var(--gray); font-size:12px; font-weight:700; }
+  .item-line { font-size:14px; padding:4px 0; border-bottom:1px dashed var(--border); }
+  .item-note { color:var(--orange-dark); font-size:12px; font-weight:600;}
+  .wait-buttons { display:flex; gap:6px; margin-top:12px; flex-wrap:wrap; }
+  .wait-btn { flex:1; min-width:50px; background:#f0f0f0; border:none; padding:9px 0; border-radius:8px; font-weight:800; cursor:pointer; font-size:14px;}
+  .wait-btn:hover { background: var(--orange); color:white; }
+  .status-tag { font-size:11px; font-weight:800; padding:3px 10px; border-radius:20px; text-transform:uppercase; }
+  .status-received { background:#fef3c7; color:#92400e; }
+  .status-preparing { background:#dbeafe; color:#1e40af; }
+  .ready-btn { width:100%; background: var(--green); color:white; border:none; padding:12px; border-radius:10px; font-weight:800; margin-top:12px; cursor:pointer; font-size:15px;}
+  .empty-state { text-align:center; padding:80px 20px; color:var(--gray); }
+  .empty-state .icn { font-size:50px; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🔔 {{ r.name }} — Kitchen</div>
+  <div style="display:flex; align-items:center;">
+    <a href="{{ url_for('admin') }}">Admin</a>
+    <a href="{{ url_for('kitchen') }}" class="active">Kitchen</a>
+    <a href="{{ url_for('runner') }}">Runner</a>
+    <a href="{{ url_for('take_order') }}">Take Order</a>
+    <a href="{{ url_for('sections') }}">Sections</a>
+    <a href="{{ url_for('admin_analytics') }}">Analytics</a>
+    <a href="{{ url_for('billing') }}">Billing</a>
+    <button class="sound-toggle" id="soundToggle" onclick="testSound()">🔊 Test Sound</button>
+  </div>
+</div>
+
+<div id="grid" class="grid">
+  <div class="empty-state" id="emptyState"><div class="icn">🍽️</div>No active orders. Waiting for customers to order...</div>
+</div>
+
+<script>
+  let knownOrderIds = new Set();
+  let firstLoad = true;
+
+  // Simple beep generated with WebAudio, no external file needed & always available
+  function playBell() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const playBeep = (delay, freq) => {
+        setTimeout(() => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.25, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(ctx.currentTime + 0.4);
+        }, delay);
+      };
+      playBeep(0, 880); playBeep(250, 1046); playBeep(500, 1318);
+    } catch (e) { console.log('Audio not available', e); }
+  }
+  function testSound() { playBell(); }
+
+  function fmtElapsed(sec) {
+    const m = Math.floor(sec/60);
+    return m < 1 ? "just now" : `${m} min ago`;
+  }
+
+  function render(orders) {
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('emptyState');
+    if (orders.length === 0) {
+      grid.innerHTML = '';
+      grid.appendChild(empty);
+      return;
+    }
+
+    const currentIds = new Set(orders.map(o => o.id));
+    const isNew = [...currentIds].filter(id => !knownOrderIds.has(id));
+    if (!firstLoad && isNew.length > 0) {
+      playBell();
+    }
+    knownOrderIds = currentIds;
+    firstLoad = false;
+
+    grid.innerHTML = '';
+    orders.forEach(o => {
+      const card = document.createElement('div');
+      card.className = 'order-card' + (isNew.includes(o.id) ? ' new-flash' : '');
+
+      let itemsHtml = o.items.map(i => `
+        <div class="item-line">${i.quantity} × ${i.name} ${i.note ? `<div class="item-note">Note: ${i.note}</div>` : ''}</div>
+      `).join('');
+
+      let actionHtml = '';
+      if (o.status === 'received') {
+        actionHtml = `
+          <div class="wait-buttons">
+            <button class="wait-btn" onclick="setWait(${o.id}, 5)">5m</button>
+            <button class="wait-btn" onclick="setWait(${o.id}, 10)">10m</button>
+            <button class="wait-btn" onclick="setWait(${o.id}, 15)">15m</button>
+            <button class="wait-btn" onclick="setWait(${o.id}, 20)">20m</button>
+            <button class="wait-btn" onclick="customWait(${o.id})">Custom</button>
+          </div>`;
+      } else if (o.status === 'preparing') {
+        const remMin = Math.floor(o.remaining_seconds / 60);
+        const remSec = o.remaining_seconds % 60;
+        actionHtml = `
+          <div style="margin-top:8px; font-weight:700; color:var(--blue);">⏱ ${remMin}:${remSec.toString().padStart(2,'0')} remaining</div>
+          <button class="ready-btn" onclick="markReady(${o.id})">✅ Mark Ready for Pickup</button>`;
+      }
+
+      const staffTag = o.placed_by === 'staff'
+        ? `<span class="status-tag" style="background:#ede9fe; color:#6d28d9;">🙋 Taken by ${o.placed_by_name || 'staff'}</span>`
+        : '';
+      card.innerHTML = `
+        <div class="order-top">
+          <div class="table-num">Table ${o.table_number}</div>
+          <span class="status-tag status-${o.status}">${o.status}</span>
+        </div>
+        ${staffTag ? `<div style="margin-top:4px;">${staffTag}</div>` : ''}
+        <div class="elapsed">${fmtElapsed(o.seconds_since_order)}</div>
+        <div style="margin-top:8px;">${itemsHtml}</div>
+        ${actionHtml}
+      `;
+      grid.appendChild(card);
+    });
+  }
+
+  function setWait(orderId, minutes) {
+    fetch(`/api/order/${orderId}/prepare`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({minutes})
+    }).then(fetchOrders);
+  }
+
+  function customWait(orderId) {
+    const m = prompt("Enter wait time in minutes:");
+    if (m && !isNaN(m)) setWait(orderId, parseInt(m));
+  }
+
+  function markReady(orderId) {
+    fetch(`/api/order/${orderId}/ready`, { method: 'POST' }).then(fetchOrders);
+  }
+
+  function fetchOrders() {
+    fetch('/api/kitchen/orders').then(r => r.json()).then(render);
+  }
+
+  fetchOrders();
+  setInterval(fetchOrders, 3000);
+</script>
+</body>
+</html>

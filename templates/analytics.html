@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Menu Analytics - {{ r.name }}</title>
+<style>
+  :root { --orange:#ff6b35; --orange-dark:#e2551f; --dark:#26262b; --gray:#6b7280; --border:#ececec; --green:#16a34a; --blue:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f4f4f4; color:var(--dark); }
+  .topbar { background: var(--dark); color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;}
+  .topbar .brand { font-weight:800; font-size:18px; }
+  .topbar a { color:#d1d5db; text-decoration:none; font-weight:600; font-size:14px; margin-left:16px;}
+  .topbar a.active { color: var(--orange); }
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
+  .period-tabs { display:flex; gap:8px; margin-bottom:20px; }
+  .period-tabs a { padding:9px 18px; border-radius:10px; background:white; color:var(--gray); font-weight:700; text-decoration:none; font-size:14px; }
+  .period-tabs a.active { background: var(--orange); color:white; }
+  .stat-strip { display:flex; gap:14px; margin-bottom: 24px; flex-wrap:wrap; }
+  .stat-box { background:white; border-radius:12px; padding:16px 18px; flex:1; min-width:140px; text-align:center; }
+  .stat-num { font-size:26px; font-weight:900; }
+  .stat-label { font-size:12px; color:var(--gray); font-weight:700; text-transform:uppercase; }
+  .card { background:white; border-radius:14px; padding:20px; margin-bottom:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+  .card h3 { margin-top:0; }
+  .rank-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-bottom:1px solid var(--border); }
+  .rank-row:last-child { border-bottom:none; }
+  .rank-num { font-weight:900; font-size:16px; color:var(--gray); width:26px; text-align:center; flex-shrink:0; }
+  .rank-num.top1 { color:#eab308; }
+  .rank-num.top2 { color:#9ca3af; }
+  .rank-num.top3 { color:#b45309; }
+  .rank-bar-wrap { flex:1; }
+  .rank-name { font-weight:700; font-size:14px; margin-bottom:4px; display:flex; justify-content:space-between; }
+  .rank-bar-bg { background:#f0f0f0; border-radius:6px; height:8px; overflow:hidden; }
+  .rank-bar-fill { background: var(--orange); height:100%; }
+  .rank-meta { font-size:12px; color:var(--gray); margin-top:3px; }
+  .rank-qty { font-weight:900; font-size:18px; min-width:50px; text-align:right; flex-shrink:0; }
+  .refill-tag { font-size:11px; background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:8px; font-weight:700; margin-left:6px; }
+  .never-ordered-item { display:inline-block; background:#fef3c7; color:#92400e; padding:5px 12px; border-radius:10px; font-size:13px; font-weight:700; margin:4px 6px 0 0; }
+  .empty-note { color:var(--gray); text-align:center; padding:30px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">📊 {{ r.name }} — Menu Analytics</div>
+  <div>
+    <a href="{{ url_for('admin') }}">Admin</a>
+    <a href="{{ url_for('kitchen') }}">Kitchen</a>
+    <a href="{{ url_for('runner') }}">Runner</a>
+    <a href="{{ url_for('sections') }}">Sections</a>
+    <a href="{{ url_for('admin_analytics') }}" class="active">Analytics</a>
+    <a href="{{ url_for('billing') }}">Billing</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="period-tabs">
+    <a href="?period=today" class="{{ 'active' if period == 'today' }}">Today</a>
+    <a href="?period=week" class="{{ 'active' if period == 'week' }}">Last 7 Days</a>
+    <a href="?period=all" class="{{ 'active' if period == 'all' }}">All Time</a>
+  </div>
+
+  <div class="stat-strip">
+    <div class="stat-box"><div class="stat-num">{{ order_count }}</div><div class="stat-label">Orders ({{ period_label }})</div></div>
+    <div class="stat-num-box"></div>
+    <div class="stat-box"><div class="stat-num">{{ total_items_sold }}</div><div class="stat-label">Items Sold</div></div>
+    <div class="stat-box"><div class="stat-num">${{ "%.2f"|format(total_revenue) }}</div><div class="stat-label">Revenue</div></div>
+  </div>
+
+  <div class="card">
+    <h3>Most Ordered Items — {{ period_label }}</h3>
+    {% if ranked %}
+      {% set max_qty = ranked[0].total_quantity %}
+      {% for item in ranked %}
+      <div class="rank-row">
+        <div class="rank-num {{ 'top1' if loop.index==1 else ('top2' if loop.index==2 else ('top3' if loop.index==3 else '')) }}">#{{ loop.index }}</div>
+        <div class="rank-bar-wrap">
+          <div class="rank-name">
+            <span>{{ item.name }}
+              {% if item.refill_quantity > 0 %}<span class="refill-tag">{{ item.refill_quantity }} were refills</span>{% endif %}
+            </span>
+          </div>
+          <div class="rank-bar-bg"><div class="rank-bar-fill" style="width: {{ (item.total_quantity / max_qty * 100) | round(1) }}%;"></div></div>
+          <div class="rank-meta">Ordered in {{ item.order_count }} separate order{{ 's' if item.order_count != 1 }} · ${{ "%.2f"|format(item.revenue) }} revenue</div>
+        </div>
+        <div class="rank-qty">{{ item.total_quantity }}×</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-note">No orders yet for this period. Once customers start ordering, you'll see your best-sellers ranked here.</div>
+    {% endif %}
+  </div>
+
+  {% if never_ordered %}
+  <div class="card">
+    <h3>⚠️ Never Ordered — {{ period_label }}</h3>
+    <p class="rank-meta" style="margin-top:-6px;">These menu items had zero orders in this period. Worth considering for a promotion, a menu redesign, or removal if this continues.</p>
+    <div style="margin-top:10px;">
+      {% for name in never_ordered %}
+        <span class="never-ordered-item">{{ name }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Table Sections - {{ r.name }}</title>
+<style>
+  :root { --orange:#ff6b35; --dark:#26262b; --gray:#6b7280; --border:#ececec; --green:#16a34a; --blue:#2563eb; --purple:#7e22ce; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f4f4f4; color:var(--dark); }
+  .topbar { background: var(--dark); color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;}
+  .topbar .brand { font-weight:800; font-size:18px; }
+  .topbar a { color:#d1d5db; text-decoration:none; font-weight:600; font-size:14px; margin-left:16px;}
+  .topbar a.active { color: var(--orange); }
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
+  .intro { background:white; border-radius:14px; padding:18px; margin-bottom:20px; border-left: 5px solid var(--orange); }
+  .intro b { color: var(--orange); }
+  .stat-strip { display:flex; gap:14px; margin-bottom: 20px; flex-wrap:wrap; }
+  .stat-box { background:white; border-radius:12px; padding:14px 18px; flex:1; min-width:140px; text-align:center; }
+  .stat-num { font-size:24px; font-weight:900; }
+  .stat-label { font-size:12px; color:var(--gray); font-weight:700; text-transform:uppercase; }
+
+  .bulk-panel { background:white; border-radius:14px; padding:18px; margin-bottom:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+  .bulk-panel h3 { margin-top:0; }
+  .bulk-row { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  .bulk-row input { flex:1; min-width:160px; padding:11px 14px; border:1.5px solid var(--border); border-radius:10px; font-size:14px; }
+  .bulk-row button { background: var(--orange); color:white; border:none; padding:11px 20px; border-radius:10px; font-weight:800; cursor:pointer; font-size:14px; }
+  .select-tools { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+  .select-tools button { background:#f0f0f0; border:none; padding:7px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
+
+  .table-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom:10px; }
+  .table-chip {
+    background:white; border:2px solid var(--border); border-radius:12px; padding:12px;
+    text-align:center; cursor:pointer; user-select:none;
+  }
+  .table-chip.selected { border-color: var(--orange); background:#fff1ea; }
+  .table-chip .num { font-weight:900; font-size:18px; }
+  .table-chip .who { font-size:11px; font-weight:700; margin-top:4px; }
+  .table-chip.assigned .who { color: var(--green); }
+  .table-chip.unassigned .who { color: var(--gray); }
+
+  .assignments-list { background:white; border-radius:14px; padding:18px; margin-top:10px; }
+  .assignment-group { padding:10px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .assignment-group:last-child { border-bottom:none; }
+  .waiter-name { font-weight:800; color: var(--purple); }
+  .waiter-tables { color:var(--gray); font-size:13px; }
+  .unassign-btn { background:#fee2e2; color:#991b1b; border:none; padding:6px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
+
+  .end-shift-btn { background:#fee2e2; color:#991b1b; border:none; padding:12px 20px; border-radius:10px; font-weight:800; cursor:pointer; font-size:14px; margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🗂️ {{ r.name }} — Table Sections</div>
+  <div>
+    <a href="{{ url_for('admin') }}">Admin</a>
+    <a href="{{ url_for('kitchen') }}">Kitchen</a>
+    <a href="{{ url_for('runner') }}">Runner</a>
+    <a href="{{ url_for('sections') }}" class="active">Sections</a>
+    <a href="{{ url_for('admin_analytics') }}">Analytics</a>
+    <a href="{{ url_for('billing') }}">Billing</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="intro">
+    <b>One runner now covers far more tables than a traditional waiter</b> — since QR
+    ordering removes order-taking and walking food orders to the kitchen, each runner's
+    job per table is just "deliver food + handle occasional requests." A typical setup is
+    <b>1 runner per 15-25 tables</b>, not the old 1-per-5 ratio. Select a group of tables
+    below and assign them all to one person at once.
+  </div>
+
+  <div class="stat-strip" id="statStrip"></div>
+
+  <div class="bulk-panel">
+    <h3>Assign Selected Tables</h3>
+    <div class="select-tools">
+      <button onclick="selectAll()">Select All</button>
+      <button onclick="selectNone()">Clear Selection</button>
+      <button onclick="selectUnassigned()">Select Unassigned Only</button>
+    </div>
+    <div class="table-grid" id="tableGrid"></div>
+    <div class="bulk-row" style="margin-top:14px;">
+      <input type="text" id="bulkName" placeholder="Waiter name (e.g. Priya)">
+      <button onclick="bulkAssign()">Assign Selected Tables →</button>
+    </div>
+  </div>
+
+  <div class="assignments-list">
+    <h3 style="margin-top:0;">Current Assignments</h3>
+    <div id="assignmentsList"></div>
+  </div>
+
+  <button class="end-shift-btn" onclick="clearAll()">🔄 End of Shift — Clear All Assignments</button>
+</div>
+
+<script>
+  let allTables = [];
+  let selected = new Set();
+
+  function loadSections() {
+    fetch('/api/sections').then(r => r.json()).then(tables => {
+      allTables = tables;
+      renderGrid();
+      renderStats();
+      renderAssignments();
+    });
+  }
+
+  function renderStats() {
+    const total = allTables.length;
+    const assigned = allTables.filter(t => t.assigned_to).length;
+    const waiterCount = new Set(allTables.filter(t => t.assigned_to).map(t => t.assigned_to)).size;
+    const strip = document.getElementById('statStrip');
+    strip.innerHTML = `
+      <div class="stat-box"><div class="stat-num">${total}</div><div class="stat-label">Total Tables</div></div>
+      <div class="stat-box"><div class="stat-num">${waiterCount}</div><div class="stat-label">Runners Assigned</div></div>
+      <div class="stat-box"><div class="stat-num">${total - assigned}</div><div class="stat-label">Unassigned Tables</div></div>
+      <div class="stat-box"><div class="stat-num">${waiterCount > 0 ? Math.round(assigned/waiterCount) : 0}</div><div class="stat-label">Avg Tables / Runner</div></div>
+    `;
+  }
+
+  function renderGrid() {
+    const grid = document.getElementById('tableGrid');
+    grid.innerHTML = '';
+    allTables.forEach(t => {
+      const chip = document.createElement('div');
+      chip.className = 'table-chip ' + (t.assigned_to ? 'assigned' : 'unassigned') + (selected.has(t.id) ? ' selected' : '');
+      chip.onclick = () => toggleSelect(t.id);
+      chip.innerHTML = `
+        <div class="num">Table ${t.number}</div>
+        <div class="who">${t.assigned_to ? t.assigned_to : 'Unassigned'}</div>
+      `;
+      grid.appendChild(chip);
+    });
+  }
+
+  function renderAssignments() {
+    const groups = {};
+    allTables.forEach(t => {
+      if (t.assigned_to) {
+        if (!groups[t.assigned_to]) groups[t.assigned_to] = [];
+        groups[t.assigned_to].push(t.number);
+      }
+    });
+    const list = document.getElementById('assignmentsList');
+    const names = Object.keys(groups);
+    if (names.length === 0) {
+      list.innerHTML = '<p style="color:var(--gray);">No tables assigned yet. Select tables above and assign them to your first runner.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    names.forEach(name => {
+      const tables = groups[name];
+      const row = document.createElement('div');
+      row.className = 'assignment-group';
+      row.innerHTML = `
+        <div>
+          <div class="waiter-name">${name}</div>
+          <div class="waiter-tables">Tables: ${tables.join(', ')} (${tables.length} tables)</div>
+        </div>
+        <button class="unassign-btn" onclick="unassignWaiter('${name}')">Unassign All</button>
+      `;
+      list.appendChild(row);
+    });
+  }
+
+  function toggleSelect(tableId) {
+    if (selected.has(tableId)) selected.delete(tableId);
+    else selected.add(tableId);
+    renderGrid();
+  }
+
+  function selectAll() { selected = new Set(allTables.map(t => t.id)); renderGrid(); }
+  function selectNone() { selected = new Set(); renderGrid(); }
+  function selectUnassigned() { selected = new Set(allTables.filter(t => !t.assigned_to).map(t => t.id)); renderGrid(); }
+
+  function bulkAssign() {
+    const name = document.getElementById('bulkName').value.trim();
+    if (!name) { alert('Enter a waiter name'); return; }
+    if (selected.size === 0) { alert('Select at least one table'); return; }
+    fetch('/api/sections/bulk_assign', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name, table_ids: Array.from(selected) })
+    }).then(r => r.json()).then(() => {
+      selected = new Set();
+      document.getElementById('bulkName').value = '';
+      loadSections();
+    });
+  }
+
+  function unassignWaiter(name) {
+    const tableIds = allTables.filter(t => t.assigned_to === name).map(t => t.id);
+    Promise.all(tableIds.map(id =>
+      fetch(`/api/sections/${id}/assign`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name: ''})
+      })
+    )).then(loadSections);
+  }
+
+  function clearAll() {
+    if (!confirm('Clear all table assignments? Use this at the end of a shift.')) return;
+    fetch('/api/sections/clear_all', { method: 'POST' }).then(loadSections);
+  }
+
+  loadSections();
+</script>
+</body>
+</html>

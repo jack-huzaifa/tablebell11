@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Billing — {{ r.name }}{% endblock %}
+{% block content %}
+<div class="navbar"><div class="navbar-inner">
+  <a href="{{ url_for('landing') }}" class="brand">{{ r.logo_emoji }} {{ r.name }}</a>
+  <div class="nav-links">
+    <a href="{{ url_for('admin') }}" class="tab">Admin</a>
+    <a href="{{ url_for('kitchen') }}" class="tab">🔔 Kitchen</a>
+    <a href="{{ url_for('runner') }}" class="tab">🏃 Runner</a>
+    <a href="{{ url_for('billing') }}" class="tab active">💳 Billing</a>
+    <a href="{{ url_for('logout') }}" class="tab">Log out</a>
+  </div>
+</div></div>
+
+<div class="container" style="padding: 28px 20px 60px; max-width: 720px;">
+
+  {% if demo_mode %}
+  <div class="flash" style="background:#fef3c7; color:#92400e;">
+    <strong>⚙️ Demo Mode</strong> — no live payment provider is configured (STRIPE_SECRET_KEY
+    is not set), so subscribing/canceling below simulates the billing flow without any real
+    charge. This lets you test the full trial → active → past-due → canceled lifecycle
+    safely. Set up a real Stripe (or Dodo Payments/Paddle) account and environment
+    variables to accept real payments.
+  </div>
+  {% endif %}
+
+  <!-- Status card -->
+  <div class="card" style="margin-bottom:20px;
+    {% if state.status == 'active' %}border-left:5px solid var(--green);
+    {% elif state.status == 'trialing' %}border-left:5px solid var(--blue);
+    {% elif state.status == 'past_due' %}border-left:5px solid var(--red);
+    {% else %}border-left:5px solid var(--gray);{% endif %}">
+    {% if state.status == 'trialing' %}
+      <h2 style="margin-top:0;">🎉 Free Trial</h2>
+      {% if state.trial_expired %}
+        <p style="color:var(--red); font-weight:700;">Your trial has ended. Choose a plan below to keep using TableBell's business features.</p>
+      {% else %}
+        <p><strong>{{ state.trial_days_left }} day{{ 's' if state.trial_days_left != 1 }} left</strong> in your free trial. No card required yet.</p>
+      {% endif %}
+    {% elif state.status == 'active' %}
+      <h2 style="margin-top:0; color:var(--green);">✅ Active Subscription</h2>
+      <p>You're on the <strong>{{ r.plan.title() }}</strong> plan (${{ plan_prices[r.plan] }}/month).
+      {% if r.current_period_end %}Next billing date: {{ r.current_period_end.strftime('%B %d, %Y') }}.{% endif %}</p>
+    {% elif state.status == 'past_due' %}
+      <h2 style="margin-top:0; color:var(--red);">⚠️ Payment Failed</h2>
+      {% if state.hard_locked %}
+        <p style="color:var(--red); font-weight:700;">
+          Your grace period has ended. Kitchen and Runner screens are now paused until payment is resolved.
+        </p>
+      {% else %}
+        <p>Your last payment didn't go through. You have <strong>{{ state.grace_days_left }} day{{ 's' if state.grace_days_left != 1 }}</strong>
+        left before your Kitchen/Runner screens are paused — update your payment method to avoid any interruption to service.</p>
+      {% endif %}
+    {% else %}
+      <h2 style="margin-top:0;">Subscription Canceled</h2>
+      <p class="muted">Resubscribe anytime below to regain full access.</p>
+    {% endif %}
+  </div>
+
+  <!-- Plan selection -->
+  <div class="section-title">Choose a Plan</div>
+  <div class="grid-3">
+    {% for plan_key, price in plan_prices.items() %}
+    <div class="card" style="{% if r.plan == plan_key and state.status == 'active' %}border:2px solid var(--orange);{% endif %}">
+      <h3 style="text-transform:capitalize;">{{ plan_key }}</h3>
+      <div style="font-size:28px; font-weight:800;">${{ price }}<span style="font-size:13px; color:var(--gray); font-weight:500;">/mo</span></div>
+      <p class="muted" style="font-size:13px;">
+        {% if plan_key == 'starter' %}Up to 10 tables{% elif plan_key == 'growth' %}11–25 tables{% else %}25+ tables{% endif %}
+      </p>
+      {% if r.plan == plan_key and state.status == 'active' %}
+        <div class="badge badge-ready" style="display:block; text-align:center; padding:8px;">Current Plan</div>
+      {% else %}
+        <a href="{{ url_for('billing_checkout', plan=plan_key) }}" class="btn btn-primary btn-sm" style="width:100%; text-align:center; display:block;">
+          {{ "Subscribe" if state.status != 'active' else "Switch to This Plan" }}
+        </a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if state.status == 'active' %}
+  <div class="section-title">Manage Subscription</div>
+  <div class="card">
+    <p class="muted">Canceling stops future charges. You'll keep access until the end of your current billing period's grace window.</p>
+    <form method="POST" action="{{ url_for('billing_cancel') }}" onsubmit="return confirm('Cancel your subscription?');">
+      <button type="submit" class="btn btn-danger btn-sm">Cancel Subscription</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if demo_mode %}
+  <div class="section-title">🧪 Demo Mode Testing Tools</div>
+  <div class="card">
+    <p class="muted">Simulate billing events to see how the app behaves — these buttons only exist in demo mode.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <form method="POST" action="{{ url_for('billing_simulate_failed_payment') }}">
+        <button type="submit" class="btn btn-outline btn-sm">Simulate Failed Payment</button>
+      </form>
+      <form method="POST" action="{{ url_for('billing_simulate_recover_payment') }}">
+        <button type="submit" class="btn btn-outline btn-sm">Simulate Payment Recovered</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="section-title">Payment History</div>
+  <div class="card">
+    {% if payments %}
+      {% for p in payments %}
+      <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+        <div>
+          <strong>${{ "%.2f"|format(p.amount) }}</strong> — {{ p.plan.title() }} plan
+          <div class="muted" style="font-size:12px;">{{ p.created_at.strftime('%B %d, %Y at %I:%M %p') }}</div>
+        </div>
+        <span class="badge {{ 'badge-ready' if p.status == 'succeeded' else 'badge-received' }}">
+          {{ p.status.title() }}
+        </span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No payments yet.</p>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
