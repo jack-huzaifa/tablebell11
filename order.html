@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>{{ r.name }} — Order</title>
+<!-- model-viewer: Google's official web component for WebAR. No app download needed -
+     it uses AR Quick Look on iPhone (via the usdz file) and Scene Viewer on Android
+     (via the glb file), both triggered straight from the browser. -->
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<style>
+  :root { --orange:#ff6b35; --orange-dark:#e2551f; --dark:#26262b; --gray:#6b7280; --border:#ececec; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#fafafa; color:var(--dark); padding-bottom: 90px; }
+  .header { background: var(--orange); color:white; padding: 22px 18px 18px; text-align:center; }
+  .header .logo { font-size: 34px; }
+  .header h1 { margin: 4px 0 2px; font-size: 20px; }
+  .header .table-tag { background: rgba(255,255,255,0.25); display:inline-block; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight:700; margin-top:6px;}
+  .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .category { font-weight: 800; font-size: 15px; color: var(--orange-dark); margin: 22px 0 10px; text-transform:uppercase; letter-spacing:0.04em;}
+  .item { background:white; border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:10px; display:flex; justify-content:space-between; gap:10px; align-items:center;}
+  .item-name { font-weight:700; font-size:15px; }
+  .item-desc { color:var(--gray); font-size:13px; margin-top:2px;}
+  .item-price { color:var(--orange-dark); font-weight:800; margin-top:4px; }
+  .qty-controls { display:flex; align-items:center; gap:8px; }
+  .qty-btn { width:32px; height:32px; border-radius:8px; border:1.5px solid var(--border); background:white; font-size:18px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center;}
+  .qty-btn.active { background:var(--orange); color:white; border-color:var(--orange); }
+  .qty-num { min-width: 20px; text-align:center; font-weight:800; }
+  .cart-bar {
+    position: fixed; bottom:0; left:0; right:0; background: var(--dark); color:white;
+    padding: 16px 20px; display:none; justify-content:space-between; align-items:center;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+  }
+  .cart-bar.show { display:flex; }
+  .cart-bar button { background: var(--orange); color:white; border:none; padding:12px 20px; border-radius:10px; font-weight:800; font-size:15px; }
+  .note-input { width:100%; margin-top:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13px; display:none; }
+  .note-toggle { font-size:12px; color:var(--gray); text-decoration:underline; cursor:pointer; margin-top:4px; display:inline-block; }
+  .need-something-link {
+    display:block; text-align:center; background:white; border:1.5px dashed var(--border);
+    border-radius:14px; padding:14px; font-weight:700; color:var(--dark); text-decoration:none;
+    margin: 20px 0;
+  }
+  .ar-btn {
+    display:inline-flex; align-items:center; gap:5px; background: #eef4ff; color: #2563eb;
+    border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 800;
+    margin-top: 8px; cursor: pointer;
+  }
+  .ar-btn:active { background: #dbeafe; }
+  .timing-choice {
+    display:none; margin-top:8px; gap:6px;
+  }
+  .timing-choice.show { display:flex; }
+  .timing-btn {
+    flex:1; background:#f5f5f5; border:1.5px solid var(--border); border-radius:8px;
+    padding:7px 6px; font-size:11px; font-weight:700; cursor:pointer; color:var(--dark);
+  }
+  .timing-btn.selected { background:var(--orange); color:white; border-color:var(--orange); }
+  .ar-modal-overlay {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:200;
+    align-items:center; justify-content:center; flex-direction:column;
+  }
+  .ar-modal-overlay.show { display:flex; }
+  .ar-modal-close {
+    position:absolute; top:16px; right:16px; background:white; border:none; width:36px;
+    height:36px; border-radius:50%; font-size:18px; font-weight:800; cursor:pointer;
+  }
+  .ar-modal-title { color:white; font-weight:800; margin-bottom:10px; text-align:center; padding:0 20px;}
+  model-viewer { width: 92vw; max-width: 420px; height: 55vh; background: #f0f0f0; border-radius: 16px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">{{ r.logo_emoji }}</div>
+  <h1>{{ r.name }}</h1>
+  <div class="table-tag">Table {{ table_number }}</div>
+</div>
+
+<div class="container">
+  {% for cat in categories %}
+    <div class="category">{{ cat }}</div>
+    {% for item in items if item.category == cat %}
+    <div class="item" id="item-{{ item.id }}">
+      <div style="flex:1;">
+        <div class="item-name">{{ item.name }}</div>
+        {% if item.description %}<div class="item-desc">{{ item.description }}</div>{% endif %}
+        <div class="item-price">${{ "%.2f"|format(item.price) }}</div>
+        {% if ar_unlocked and (item.ar_model_glb_url or item.ar_model_usdz_url) %}
+        <button class="ar-btn" onclick="openAR('{{ item.id }}', '{{ item.name|e }}', '{{ item.ar_model_glb_url or '' }}', '{{ item.ar_model_usdz_url or '' }}')">
+          📱 View in 3D / AR
+        </button>
+        {% endif %}
+        <div class="note-toggle" onclick="toggleNote({{ item.id }})">+ add a note</div>
+        <input type="text" class="note-input" id="note-{{ item.id }}" placeholder="e.g. no onions" oninput="updateNote({{ item.id }}, this.value)">
+        {% if not item.needs_prep and item.delivery_timing == "with_meal" %}
+        <div class="timing-choice" id="timing-{{ item.id }}">
+          <button type="button" class="timing-btn selected" id="timing-{{ item.id }}-with_meal" onclick="setTiming({{ item.id }}, 'with_meal')">⏱ Bring with my food</button>
+          <button type="button" class="timing-btn" id="timing-{{ item.id }}-now" onclick="setTiming({{ item.id }}, 'now')">⚡ Bring it now</button>
+        </div>
+        {% endif %}
+      </div>
+      <div class="qty-controls">
+        <button class="qty-btn" onclick="changeQty({{ item.id }}, -1)">−</button>
+        <span class="qty-num" id="qty-{{ item.id }}">0</span>
+        <button class="qty-btn" onclick="changeQty({{ item.id }}, 1)">+</button>
+      </div>
+    </div>
+    {% endfor %}
+  {% endfor %}
+  {% if not items %}
+    <p style="text-align:center; color:var(--gray); margin-top:40px;">Menu is being updated. Please check back shortly.</p>
+  {% endif %}
+
+  <a href="/request/{{ r.slug }}/{{ table_number }}" class="need-something-link">🙋 Need a refill, napkins, or the check? Tap here</a>
+</div>
+
+<div class="cart-bar" id="cartBar">
+  <div><span id="cartCount">0</span> items · $<span id="cartTotal">0.00</span></div>
+  <button onclick="placeOrder()">Place Order →</button>
+</div>
+
+<div class="ar-modal-overlay" id="arModalOverlay">
+  <button class="ar-modal-close" onclick="closeAR()">✕</button>
+  <div class="ar-modal-title" id="arModalTitle"></div>
+  <model-viewer id="arModelViewer" ar ar-modes="scene-viewer quick-look webxr" camera-controls
+    auto-rotate shadow-intensity="1" alt="3D preview of the dish">
+    <button slot="ar-button" class="ar-btn" style="position:absolute; bottom:16px; left:50%; transform:translateX(-50%); background:#ff6b35; color:white;">
+      🔍 View on Your Table (AR)
+    </button>
+  </model-viewer>
+  <p style="color:#d1d5db; font-size:12px; margin-top:10px; text-align:center; padding:0 20px;">
+    Rotate with your finger. Tap "View on Your Table" to place it in AR using your camera — no app needed.
+  </p>
+</div>
+
+<script>
+  const PRICES = { {% for item in items %}{{ item.id }}: {{ item.price }},{% endfor %} };
+  const cart = {}; // id -> {quantity, note}
+
+  function changeQty(id, delta) {
+    if (!cart[id]) cart[id] = { quantity: 0, note: "", timing: null };
+    cart[id].quantity = Math.max(0, cart[id].quantity + delta);
+    document.getElementById('qty-' + id).textContent = cart[id].quantity;
+    const el = document.getElementById('item-' + id);
+    el.style.background = cart[id].quantity > 0 ? '#fff1ea' : 'white';
+
+    // Show the "bring now vs bring with food" choice only once this item is
+    // actually in the cart, and only for items that have that choice at all.
+    const timingRow = document.getElementById('timing-' + id);
+    if (timingRow) {
+      if (cart[id].quantity > 0) timingRow.classList.add('show');
+      else timingRow.classList.remove('show');
+    }
+    updateCartBar();
+  }
+
+  function setTiming(id, value) {
+    if (!cart[id]) cart[id] = { quantity: 0, note: "", timing: null };
+    cart[id].timing = value;
+    document.getElementById('timing-' + id + '-with_meal').classList.toggle('selected', value === 'with_meal');
+    document.getElementById('timing-' + id + '-now').classList.toggle('selected', value === 'now');
+  }
+
+  function toggleNote(id) {
+    const el = document.getElementById('note-' + id);
+    el.style.display = el.style.display === 'block' ? 'none' : 'block';
+  }
+
+  function updateNote(id, value) {
+    if (!cart[id]) cart[id] = { quantity: 0, note: "", timing: null };
+    cart[id].note = value;
+  }
+
+  function updateCartBar() {
+    let count = 0, total = 0;
+    for (const id in cart) {
+      count += cart[id].quantity;
+      total += cart[id].quantity * PRICES[id];
+    }
+    const bar = document.getElementById('cartBar');
+    if (count > 0) {
+      bar.classList.add('show');
+      document.getElementById('cartCount').textContent = count;
+      document.getElementById('cartTotal').textContent = total.toFixed(2);
+    } else {
+      bar.classList.remove('show');
+    }
+  }
+
+  function openAR(itemId, itemName, glbUrl, usdzUrl) {
+    const viewer = document.getElementById('arModelViewer');
+    if (glbUrl) viewer.setAttribute('src', glbUrl);
+    if (usdzUrl) viewer.setAttribute('ios-src', usdzUrl);
+    document.getElementById('arModalTitle').textContent = itemName;
+    document.getElementById('arModalOverlay').classList.add('show');
+  }
+
+  function closeAR() {
+    document.getElementById('arModalOverlay').classList.remove('show');
+    const viewer = document.getElementById('arModelViewer');
+    viewer.removeAttribute('src');
+    viewer.removeAttribute('ios-src');
+  }
+
+  function placeOrder() {
+    const cartArr = [];
+    for (const id in cart) {
+      if (cart[id].quantity > 0) {
+        const line = { id: parseInt(id), quantity: cart[id].quantity, note: cart[id].note };
+        // Only send a "timing" override if this item actually has the choice
+        // UI (i.e. it's a "with_meal" item where the customer picked "now"
+        // instead) - for every other item, omit it entirely so the backend
+        // uses that menu item's own configured default instead of guessing.
+        if (cart[id].timing) line.timing = cart[id].timing;
+        cartArr.push(line);
+      }
+    }
+    if (cartArr.length === 0) return;
+
+    fetch(window.location.pathname + '/place', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cart: cartArr })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.order_id) {
+        const extra = data.instant_order_id ? ('?instant=' + data.instant_order_id) : '';
+        window.location.href = '/order/status/' + data.order_id + extra;
+      } else {
+        alert('Something went wrong placing your order. Please try again.');
+      }
+    });
+  }
+</script>
+</body>
+</html>

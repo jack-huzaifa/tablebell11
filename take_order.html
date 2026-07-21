@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Take Order - {{ r.name }}</title>
+<style>
+  :root { --orange:#ff6b35; --orange-dark:#e2551f; --dark:#26262b; --gray:#6b7280; --border:#ececec; --green:#16a34a; --blue:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f4f4f4; color:var(--dark); padding-bottom:100px; }
+  .topbar { background: var(--dark); color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; position:sticky; top:0; z-index:20;}
+  .topbar .brand { font-weight:800; font-size:18px; }
+  .topbar a { color:#d1d5db; text-decoration:none; font-weight:600; font-size:14px; margin-left:16px;}
+  .topbar a.active { color: var(--orange); }
+  .container { max-width: 640px; margin: 0 auto; padding: 20px; }
+  .intro { background:white; border-radius:14px; padding:16px 18px; margin-bottom:18px; border-left: 5px solid var(--blue); font-size:14px; }
+  .field-row { display:flex; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+  .field-box { flex:1; min-width:160px; background:white; border-radius:12px; padding:14px; }
+  .field-box label { font-weight:700; font-size:12px; text-transform:uppercase; color:var(--gray); }
+  .field-box select, .field-box input { width:100%; padding:11px; border:1.5px solid var(--border); border-radius:10px; font-size:16px; margin-top:6px; }
+  .category { font-weight:800; font-size:15px; color:var(--orange-dark); margin:20px 0 10px; text-transform:uppercase; }
+  .item-row { background:white; border-radius:14px; padding:14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:10px;}
+  .item-name { font-weight:700; font-size:15px; }
+  .item-price { color:var(--orange-dark); font-weight:800; font-size:13px; margin-top:2px;}
+  .qty-controls { display:flex; align-items:center; gap:10px; }
+  .qty-btn { width:38px; height:38px; border-radius:10px; border:1.5px solid var(--border); background:white; font-size:20px; font-weight:800; cursor:pointer; }
+  .qty-btn.active { background:var(--orange); color:white; border-color:var(--orange); }
+  .qty-num { min-width:24px; text-align:center; font-weight:800; font-size:16px; }
+  .cart-bar {
+    position: fixed; bottom:0; left:0; right:0; background: var(--dark); color:white;
+    padding: 16px 20px; display:none; justify-content:space-between; align-items:center;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+  }
+  .cart-bar.show { display:flex; }
+  .cart-bar button { background: var(--orange); color:white; border:none; padding:13px 22px; border-radius:10px; font-weight:800; font-size:15px; cursor:pointer; }
+  .success-banner { background:#dcfce7; color:#166534; padding:14px; border-radius:12px; font-weight:700; margin-bottom:16px; display:none; text-align:center; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🙋 {{ r.name }} — Take Order</div>
+  <div>
+    <a href="{{ url_for('admin') }}">Admin</a>
+    <a href="{{ url_for('kitchen') }}">Kitchen</a>
+    <a href="{{ url_for('runner') }}">Runner</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="success-banner" id="successBanner">✅ Order sent to the kitchen!</div>
+
+  <div class="intro">
+    <strong>For customers who don't have or don't want to use a smartphone</strong> — take
+    their order verbally like normal table service, enter it here, and it goes straight to
+    the kitchen bell exactly like a self-service order. No customer phone needed.
+  </div>
+
+  <div class="field-row">
+    <div class="field-box">
+      <label>Table Number</label>
+      <select id="tableSelect">
+        <option value="">Select a table...</option>
+        {% for t in tables %}
+        <option value="{{ t.number }}">Table {{ t.number }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-box">
+      <label>Your Name (Staff)</label>
+      <input type="text" id="staffName" placeholder="e.g. Priya">
+    </div>
+  </div>
+
+  {% for cat in categories %}
+    <div class="category">{{ cat }}</div>
+    {% for item in items if item.category == cat %}
+    <div class="item-row" id="item-{{ item.id }}">
+      <div>
+        <div class="item-name">{{ item.name }}</div>
+        <div class="item-price">${{ "%.2f"|format(item.price) }}</div>
+      </div>
+      <div class="qty-controls">
+        <button class="qty-btn" onclick="changeQty({{ item.id }}, -1)">−</button>
+        <span class="qty-num" id="qty-{{ item.id }}">0</span>
+        <button class="qty-btn" onclick="changeQty({{ item.id }}, 1)">+</button>
+      </div>
+    </div>
+    {% endfor %}
+  {% endfor %}
+</div>
+
+<div class="cart-bar" id="cartBar">
+  <div><span id="cartCount">0</span> items · $<span id="cartTotal">0.00</span></div>
+  <button onclick="submitOrder()">Send to Kitchen →</button>
+</div>
+
+<script>
+  const PRICES = { {% for item in items %}{{ item.id }}: {{ item.price }},{% endfor %} };
+  const cart = {};
+
+  function changeQty(id, delta) {
+    if (!cart[id]) cart[id] = 0;
+    cart[id] = Math.max(0, cart[id] + delta);
+    document.getElementById('qty-' + id).textContent = cart[id];
+    document.getElementById('item-' + id).style.background = cart[id] > 0 ? '#fff1ea' : 'white';
+    updateCartBar();
+  }
+
+  function updateCartBar() {
+    let count = 0, total = 0;
+    for (const id in cart) {
+      count += cart[id];
+      total += cart[id] * PRICES[id];
+    }
+    const bar = document.getElementById('cartBar');
+    if (count > 0) {
+      bar.classList.add('show');
+      document.getElementById('cartCount').textContent = count;
+      document.getElementById('cartTotal').textContent = total.toFixed(2);
+    } else {
+      bar.classList.remove('show');
+    }
+  }
+
+  function submitOrder() {
+    const table = document.getElementById('tableSelect').value;
+    const staffName = document.getElementById('staffName').value.trim();
+    if (!table) { alert('Please select a table'); return; }
+    if (!staffName) { alert('Please enter your name'); return; }
+
+    const cartArr = [];
+    for (const id in cart) {
+      if (cart[id] > 0) cartArr.push({ id: parseInt(id), quantity: cart[id], note: '' });
+    }
+    if (cartArr.length === 0) { alert('Add at least one item'); return; }
+
+    fetch('/api/take-order/place', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_number: table, staff_name: staffName, cart: cartArr })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        // reset cart for the next order, keep staff name for convenience
+        for (const id in cart) cart[id] = 0;
+        document.querySelectorAll('.qty-num').forEach(el => el.textContent = '0');
+        document.querySelectorAll('.item-row').forEach(el => el.style.background = 'white');
+        document.getElementById('tableSelect').value = '';
+        updateCartBar();
+        const banner = document.getElementById('successBanner');
+        banner.style.display = 'block';
+        window.scrollTo({top: 0, behavior: 'smooth'});
+        setTimeout(() => { banner.style.display = 'none'; }, 3000);
+      } else {
+        alert(data.error || 'Something went wrong');
+      }
+    });
+  }
+</script>
+</body>
+</html>

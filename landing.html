@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}TableBell — Cut Your Waiter Costs{% endblock %}
+{% block content %}
+<div class="navbar"><div class="navbar-inner">
+  <div class="brand">🔔 TableBell</div>
+  <div class="nav-links">
+    <a href="{{ url_for('login') }}" class="tab">Log in</a>
+    <a href="{{ url_for('signup') }}" class="btn btn-primary btn-sm">Start Free</a>
+  </div>
+</div></div>
+
+<div style="background: linear-gradient(180deg, #fff1ea 0%, #fafafa 100%); padding: 70px 20px 50px;">
+  <div class="container" style="text-align:center; max-width: 720px;">
+    <div style="font-size:60px; margin-bottom: 10px;">🔔</div>
+    <h1 style="font-size: 38px; line-height:1.2; margin-bottom: 14px;">Replace order-taking waiters with a QR code and a kitchen bell.</h1>
+    <p class="muted" style="font-size:18px; margin-bottom: 28px;">
+      Customers scan, order, and see a live wait-time countdown. Your kitchen gets an instant
+      alert. One runner delivers the food. Most restaurants cut 1–2 order-taking positions.
+    </p>
+    <a href="{{ url_for('signup') }}" class="btn btn-primary" style="font-size:16px; padding:14px 30px;">Get Started Free</a>
+    <p class="muted" style="font-size:13px; margin-top:10px;">No credit card required · Set up in 15 minutes</p>
+  </div>
+</div>
+
+<div class="container" style="padding: 50px 20px;">
+  <div class="grid-3">
+    <div class="card">
+      <div style="font-size:28px;">📱</div>
+      <h3>1. Customer scans & orders</h3>
+      <p class="muted">No app download. They scan the table's QR code, browse the menu, and place an order from their phone.</p>
+    </div>
+    <div class="card">
+      <div style="font-size:28px;">🔔</div>
+      <h3>2. Kitchen bell rings</h3>
+      <p class="muted">The order appears instantly on the kitchen screen with a sound alert. The cook sets a wait time.</p>
+    </div>
+    <div class="card">
+      <div style="font-size:28px;">🏃</div>
+      <h3>3. One runner delivers</h3>
+      <p class="muted">Customer sees a live countdown. When food's ready, your one runner gets notified and delivers it.</p>
+    </div>
+  </div>
+</div>
+
+<div style="background: var(--dark); color: white; padding: 50px 20px; text-align:center;">
+  <div class="container" style="max-width: 640px;">
+    <h2 style="color:white;">The math is simple.</h2>
+    <p style="color:#d1d5db; font-size:17px;">
+      One 8-hour server shift costs restaurants $100–150+ in wages alone.
+      TableBell costs less than that — <strong style="color:var(--orange);">per month</strong> —
+      while helping you run with fewer order-taking staff, every single day.
+    </p>
+  </div>
+</div>
+
+<div class="container" style="padding: 60px 20px;">
+  <h2 style="text-align:center;">Simple, flat pricing</h2>
+  <p class="muted" style="text-align:center; margin-bottom:30px;">No commissions. No per-order fees. Cancel anytime.</p>
+  <div class="grid-3">
+    <div class="card">
+      <h3>Starter</h3>
+      <div style="font-size:32px; font-weight:800;">${{ plan_prices.starter }}<span style="font-size:14px; color:var(--gray); font-weight:500;">/mo</span></div>
+      <p class="muted">Up to 10 tables</p>
+      <a href="{{ url_for('signup') }}" class="btn btn-outline" style="width:100%; text-align:center; display:block; margin-top:10px;">Choose Starter</a>
+    </div>
+    <div class="card" style="border: 2px solid var(--orange);">
+      <h3>Growth</h3>
+      <div style="font-size:32px; font-weight:800;">${{ plan_prices.growth }}<span style="font-size:14px; color:var(--gray); font-weight:500;">/mo</span></div>
+      <p class="muted">11–25 tables</p>
+      <a href="{{ url_for('signup') }}" class="btn btn-primary" style="width:100%; text-align:center; display:block; margin-top:10px;">Choose Growth</a>
+    </div>
+    <div class="card">
+      <h3>Pro</h3>
+      <div style="font-size:32px; font-weight:800;">${{ plan_prices.pro }}<span style="font-size:14px; color:var(--gray); font-weight:500;">/mo</span></div>
+      <p class="muted">25+ tables, high volume</p>
+      <a href="{{ url_for('signup') }}" class="btn btn-outline" style="width:100%; text-align:center; display:block; margin-top:10px;">Choose Pro</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

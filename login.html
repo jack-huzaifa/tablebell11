@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Log In — TableBell{% endblock %}
+{% block content %}
+<div class="navbar"><div class="navbar-inner">
+  <a href="{{ url_for('landing') }}" class="brand">🔔 TableBell</a>
+  <div class="nav-links"><a href="{{ url_for('signup') }}" class="tab">Sign up</a></div>
+</div></div>
+<div class="container" style="max-width: 420px; padding: 50px 20px;">
+  <div class="card">
+    <h2>Log in</h2>
+    <form method="POST">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" name="email" required>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" name="password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Log In</button>
+    </form>
+    <p class="muted" style="font-size:13px; margin-top:16px;">
+      No account? <a href="{{ url_for('signup') }}" style="color:var(--orange-dark); font-weight:700;">Sign up free</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

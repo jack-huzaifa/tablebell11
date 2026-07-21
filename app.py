@@ -84,6 +84,15 @@ class Restaurant(db.Model):
     payment_failed_at = db.Column(db.DateTime, nullable=True)  # when the most recent
     # failed charge happened, used to run the grace-period/dunning countdown
 
+    # The first time this restaurant's billing_status became "active" (i.e. became a
+    # real paying subscriber, not just a trial). Used to gate premium features - like
+    # the AR menu preview - behind subscription tenure rather than offering everything
+    # to every signup on day one. Trial time does NOT count toward this.
+    became_active_at = db.Column(db.DateTime, nullable=True)
+    # Manual override to unlock AR early for a specific restaurant (e.g. a demo account,
+    # or a goodwill exception) regardless of tenure. Defaults to off for everyone.
+    ar_unlock_override = db.Column(db.Boolean, default=False)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     menu_items = db.relationship('MenuItem', backref='restaurant', cascade="all, delete-orphan")
@@ -111,6 +120,27 @@ class MenuItem(db.Model):
     # available (e.g. water, fountain soda, bread basket) and goes straight to the runner
     # with no kitchen/wait-time step.
     needs_prep = db.Column(db.Boolean, default=True)
+    # Only meaningful when needs_prep=False (i.e. an "instant" item that needs no
+    # cooking). Two very different real-world cases exist here, and treating them
+    # the same was a real bug:
+    #   - "immediate": deliver right away, no downside to early delivery
+    #     (water, napkins, cutlery, condiments)
+    #   - "with_meal": do NOT deliver early even though no cooking is needed -
+    #     hold it and deliver together with the kitchen items so it arrives at
+    #     the right moment (cold drinks that would go warm sitting out, ice
+    #     cream/desserts that would melt or feel out of place served before the
+    #     meal, etc.)
+    delivery_timing = db.Column(db.String(20), default="immediate")
+    # Optional: a 3D model file (.glb for Android/Scene Viewer, .usdz for iPhone/AR Quick
+    # Look) that lets a customer view this dish in augmented reality before ordering.
+    # No app download needed - this uses WebAR, built into iOS Safari and Android Chrome.
+    # Left blank for most items since 3D model creation is a real per-dish cost - see
+    # README "Augmented Reality Menu Preview" section for the full cost/scope discussion.
+    ar_model_glb_url = db.Column(db.String(500), nullable=True)
+    ar_model_usdz_url = db.Column(db.String(500), nullable=True)
+
+    def has_ar(self):
+        return bool(self.ar_model_glb_url or self.ar_model_usdz_url)
 
 
 
@@ -262,6 +292,43 @@ TRIAL_DAYS = 14
 GRACE_PERIOD_DAYS = 5  # days after a failed charge before service-critical
 # screens (kitchen/runner) get locked - gives the owner time to fix a card
 # without disrupting an active dinner service.
+
+AR_UNLOCK_AFTER_MONTHS = 3  # AR menu preview is offered as a loyalty perk once a
+# restaurant has been an ACTIVE PAYING subscriber (not trial) for this many months -
+# not a day-one feature. This keeps 3D-model costs proportional to proven, retained
+# customers rather than every signup, and gives you a natural, low-effort upsell/
+# re-engagement moment partway through the relationship.
+
+
+def months_since(dt):
+    if not dt:
+        return 0
+    now = datetime.utcnow()
+    return (now.year - dt.year) * 12 + (now.month - dt.month) - (1 if now.day < dt.day else 0)
+
+
+def ar_menu_unlocked(r):
+    """
+    Whether this restaurant is allowed to use the AR menu preview feature. True if:
+      - an explicit manual override is set (e.g. for demo purposes), OR
+      - the restaurant has been an active paying subscriber for AR_UNLOCK_AFTER_MONTHS
+        months or more (trial time does not count).
+    """
+    if r.ar_unlock_override:
+        return True
+    if not r.became_active_at:
+        return False
+    return months_since(r.became_active_at) >= AR_UNLOCK_AFTER_MONTHS
+
+
+def ar_months_remaining(r):
+    """How many more months until AR unlocks naturally (0 if already unlocked)."""
+    if ar_menu_unlocked(r):
+        return 0
+    if not r.became_active_at:
+        return AR_UNLOCK_AFTER_MONTHS  # hasn't even subscribed yet
+    elapsed = months_since(r.became_active_at)
+    return max(0, AR_UNLOCK_AFTER_MONTHS - elapsed)
 
 
 def get_billing_state(r):
@@ -443,20 +510,34 @@ def signup():
         for n in ["1", "2", "3"]:
             db.session.add(Table(restaurant_id=r.id, number=n))
         # needs_prep=True -> kitchen must cook/make it (refill goes through kitchen flow)
-        # needs_prep=False -> already available/stocked (refill goes straight to runner)
+        # needs_prep=False -> already available/stocked, but delivery_timing decides WHEN:
+        #   "immediate"  -> deliver right away, no downside (water)
+        #   "with_meal"  -> hold and deliver together with kitchen items so it
+        #                   doesn't melt/go warm sitting out during the cook time
+        #                   (ice cream, cold drinks) - this demo data intentionally
+        #                   includes one of each so the distinction is demoable
+        #                   out of the box, with zero setup.
+        # The Avocado Toast item includes a real, working AR 3D model (from Khronos
+        # Group's public glTF sample model set) so a demo restaurant shows exactly how
+        # the "View in 3D / AR" feature looks and works, with zero setup required.
+        AVOCADO_GLB = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Avocado/glTF-Binary/Avocado.glb"
         demo_items = [
-            ("Garlic Bread", "Starters", 6.50, "Toasted with garlic butter", True),
-            ("Caesar Salad", "Starters", 8.00, "Romaine, parmesan, croutons", True),
-            ("Margherita Pizza", "Main Course", 13.50, "Tomato, mozzarella, basil", True),
-            ("Grilled Chicken", "Main Course", 15.00, "Served with seasonal veg", True),
-            ("Iced Tea", "Beverages", 3.50, "Freshly brewed, served over ice", False),
-            ("Water (Still/Sparkling)", "Beverages", 0.00, "Complimentary refill", False),
-            ("Chocolate Cake", "Desserts", 7.00, "Warm with vanilla ice cream", True),
+            # (name, category, price, description, needs_prep, ar_glb, delivery_timing)
+            ("Garlic Bread", "Starters", 6.50, "Toasted with garlic butter", True, None, "immediate"),
+            ("Avocado Toast", "Starters", 9.50, "Smashed avocado, chili flakes, sourdough — tap 'View in 3D' below!", True, AVOCADO_GLB, "immediate"),
+            ("Caesar Salad", "Starters", 8.00, "Romaine, parmesan, croutons", True, None, "immediate"),
+            ("Margherita Pizza", "Main Course", 13.50, "Tomato, mozzarella, basil", True, None, "immediate"),
+            ("Grilled Chicken", "Main Course", 15.00, "Served with seasonal veg", True, None, "immediate"),
+            ("Water (Still/Sparkling)", "Beverages", 0.00, "Complimentary refill", False, None, "immediate"),
+            ("Iced Tea", "Beverages", 3.50, "Freshly brewed, served over ice — held and delivered with your food so it's still cold when it arrives", False, None, "with_meal"),
+            ("Chocolate Cake", "Desserts", 7.00, "Warm with vanilla ice cream", True, None, "immediate"),
+            ("Vanilla Ice Cream", "Desserts", 5.00, "A scoop of vanilla — held and delivered with your food so it doesn't melt waiting", False, None, "with_meal"),
         ]
-        for nm, cat, price, desc, needs_prep in demo_items:
+        for nm, cat, price, desc, needs_prep, ar_glb, timing in demo_items:
             db.session.add(MenuItem(
                 restaurant_id=r.id, name=nm, category=cat, price=price,
-                description=desc, needs_prep=needs_prep,
+                description=desc, needs_prep=needs_prep, ar_model_glb_url=ar_glb,
+                delivery_timing=timing,
             ))
         db.session.commit()
 
@@ -528,6 +609,8 @@ def admin():
         table_limit=PLAN_TABLE_LIMITS.get(r.plan, 10),
         plan_prices=PLAN_PRICES, top_items_today=top_items_today,
         billing_state=get_billing_state(r),
+        ar_unlocked=ar_menu_unlocked(r), ar_months_remaining=ar_months_remaining(r),
+        ar_unlock_after_months=AR_UNLOCK_AFTER_MONTHS, demo_mode=DEMO_MODE,
     )
 
 
@@ -633,16 +716,57 @@ def api_admin_analytics():
 @billing_required
 def admin_menu_add():
     r = current_restaurant()
+    # AR fields are only honored if this restaurant has unlocked the AR menu preview
+    # feature (see ar_menu_unlocked()) - this is enforced server-side, not just hidden
+    # in the UI, so the gate can't be bypassed by posting directly to this endpoint.
+    ar_glb, ar_usdz = None, None
+    if ar_menu_unlocked(r):
+        ar_glb = request.form.get('ar_model_glb_url', '').strip() or None
+        ar_usdz = request.form.get('ar_model_usdz_url', '').strip() or None
+
+    needs_prep = (request.form.get('needs_prep') == 'yes')
+    delivery_timing = request.form.get('delivery_timing', 'immediate')
+    if delivery_timing not in ('immediate', 'with_meal'):
+        delivery_timing = 'immediate'
+
     item = MenuItem(
         restaurant_id=r.id,
         name=request.form.get('name', '').strip(),
         category=request.form.get('category', 'Main Course').strip() or "Main Course",
         price=float(request.form.get('price') or 0),
         description=request.form.get('description', '').strip(),
-        needs_prep=(request.form.get('needs_prep') == 'yes'),
+        needs_prep=needs_prep,
+        # delivery_timing is only meaningful for non-kitchen items; keep it at
+        # the default for kitchen items since they're never affected by it.
+        delivery_timing=delivery_timing if not needs_prep else "immediate",
+        ar_model_glb_url=ar_glb,
+        ar_model_usdz_url=ar_usdz,
     )
     db.session.add(item)
     db.session.commit()
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/menu/<int:item_id>/ar', methods=['POST'])
+@login_required
+@billing_required
+def admin_menu_set_ar(item_id):
+    """Attach or update the AR model links for an existing menu item - only allowed
+    once this restaurant has unlocked the AR menu preview feature (loyalty perk after
+    AR_UNLOCK_AFTER_MONTHS of active paid subscription, or an explicit override)."""
+    r = current_restaurant()
+    if not ar_menu_unlocked(r):
+        flash(
+            f"AR menu preview unlocks after {AR_UNLOCK_AFTER_MONTHS} months as an active "
+            f"subscriber - it's not available on your account yet.", "error"
+        )
+        return redirect(url_for('admin'))
+
+    item = MenuItem.query.filter_by(id=item_id, restaurant_id=r.id).first_or_404()
+    item.ar_model_glb_url = request.form.get('ar_model_glb_url', '').strip() or None
+    item.ar_model_usdz_url = request.form.get('ar_model_usdz_url', '').strip() or None
+    db.session.commit()
+    flash(f"AR preview updated for {item.name}.", "success")
     return redirect(url_for('admin'))
 
 
@@ -652,6 +776,19 @@ def admin_menu_toggle_prep(item_id):
     r = current_restaurant()
     item = MenuItem.query.filter_by(id=item_id, restaurant_id=r.id).first_or_404()
     item.needs_prep = not item.needs_prep
+    db.session.commit()
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/menu/<int:item_id>/toggle_timing', methods=['POST'])
+@login_required
+def admin_menu_toggle_timing(item_id):
+    """Only meaningful for non-kitchen items: flip between delivering right
+    away vs. holding the item until it can be delivered together with the
+    food from the same order (for perishables like ice cream or cold drinks)."""
+    r = current_restaurant()
+    item = MenuItem.query.filter_by(id=item_id, restaurant_id=r.id).first_or_404()
+    item.delivery_timing = "with_meal" if item.delivery_timing == "immediate" else "immediate"
     db.session.commit()
     return redirect(url_for('admin'))
 
@@ -837,6 +974,8 @@ def billing_checkout(plan):
         r.billing_status = "active"
         r.payment_failed_at = None
         r.current_period_end = datetime.utcnow() + timedelta(days=30)
+        if not r.became_active_at:
+            r.became_active_at = datetime.utcnow()
         db.session.add(Payment(
             restaurant_id=r.id, amount=PLAN_PRICES[plan], status="succeeded",
             plan=plan, stripe_event_id="demo_mode",
@@ -915,10 +1054,44 @@ def billing_simulate_recover_payment():
     r.billing_status = "active"
     r.payment_failed_at = None
     r.current_period_end = datetime.utcnow() + timedelta(days=30)
+    if not r.became_active_at:
+        r.became_active_at = datetime.utcnow()
     db.session.add(Payment(restaurant_id=r.id, amount=PLAN_PRICES.get(r.plan, 0), status="succeeded", plan=r.plan))
     db.session.commit()
     flash("[Demo Mode] Payment recovered - subscription is active again.", "success")
     return redirect(url_for('billing'))
+
+
+@app.route('/billing/simulate_ar_unlock', methods=['POST'])
+@login_required
+def billing_simulate_ar_unlock():
+    """
+    Demo-mode-only helper to instantly grant AR menu preview access, as if this
+    restaurant had already been an active subscriber for AR_UNLOCK_AFTER_MONTHS
+    months - lets you show the "locked -> unlocked" moment live in a demo without
+    actually waiting months. Not exposed in live mode.
+    """
+    if not DEMO_MODE:
+        return jsonify({"error": "Only available in demo mode"}), 403
+    r = current_restaurant()
+    r.ar_unlock_override = True
+    db.session.commit()
+    flash("[Demo Mode] AR menu preview unlocked early for this account (simulating "
+          f"{AR_UNLOCK_AFTER_MONTHS}+ months of active subscription).", "success")
+    return redirect(url_for('admin'))
+
+
+@app.route('/billing/simulate_ar_relock', methods=['POST'])
+@login_required
+def billing_simulate_ar_relock():
+    """Demo-mode helper: revert the AR unlock override, back to the normal tenure gate."""
+    if not DEMO_MODE:
+        return jsonify({"error": "Only available in demo mode"}), 403
+    r = current_restaurant()
+    r.ar_unlock_override = False
+    db.session.commit()
+    flash("[Demo Mode] AR override removed - back to normal tenure-based unlock.", "success")
+    return redirect(url_for('admin'))
 
 
 @app.route('/webhooks/stripe', methods=['POST'])
@@ -955,6 +1128,8 @@ def stripe_webhook():
         r.stripe_subscription_id = data.get('subscription')
         r.billing_status = "active"
         r.payment_failed_at = None
+        if not r.became_active_at:
+            r.became_active_at = datetime.utcnow()
         plan = data.get('metadata', {}).get('plan')
         if plan in PLAN_PRICES:
             r.plan = plan
@@ -968,6 +1143,8 @@ def stripe_webhook():
         r.billing_status = "active"
         r.payment_failed_at = None
         r.current_period_end = datetime.utcnow() + timedelta(days=30)
+        if not r.became_active_at:
+            r.became_active_at = datetime.utcnow()
         db.session.add(Payment(
             restaurant_id=r.id, amount=(data.get('amount_paid') or 0) / 100,
             status="succeeded", plan=r.plan, stripe_event_id=event['id'],
@@ -1004,11 +1181,53 @@ def customer_order(slug, table_number):
         if i.category not in seen:
             categories.append(i.category)
             seen.add(i.category)
-    return render_template('order.html', r=r, items=items, categories=categories, table_number=table_number)
+    # The "View in 3D / AR" button only actually shows to customers once this
+    # restaurant has unlocked the AR menu preview feature (see ar_menu_unlocked) -
+    # a menu item can have a model attached behind the scenes (e.g. the demo data)
+    # without customers seeing the button until the restaurant is eligible.
+    return render_template(
+        'order.html', r=r, items=items, categories=categories, table_number=table_number,
+        ar_unlocked=ar_menu_unlocked(r),
+    )
 
 
 @app.route('/order/<slug>/<table_number>/place', methods=['POST'])
 def place_order(slug, table_number):
+    """
+    Places the customer's initial cart. A cart is very often mixed, and different
+    items need genuinely different delivery timing - conflating these was a real
+    bug found during testing. Every line is sorted into one of THREE groups:
+
+      1. Kitchen-made items (needs_prep=True) - a pizza, a cooked dish, etc. Goes
+         into a normal Order with status "received", flowing through the usual
+         kitchen bell -> wait-time -> ready -> runner pipeline.
+
+      2. Instant / deliver-immediately items - water, napkins, cutlery, OR a
+         "with_meal" item (see below) that the CUSTOMER has explicitly chosen to
+         get right away instead. Nothing is lost by delivering these now, so
+         they go into their own Order created directly with status "ready",
+         appearing immediately on the Runner's delivery list without ever
+         touching the Kitchen dashboard.
+
+      3. Instant-but-hold-for-the-meal items - a cold drink that would go warm,
+         ice cream or a dessert that would melt if delivered too early. The
+         restaurant owner sets this as the DEFAULT per menu item
+         (delivery_timing="with_meal"), but it is genuinely a matter of
+         customer preference in the moment (e.g. "bring my iced tea now, we
+         want to chat before the food arrives" vs "bring it fresh with the
+         food") - so the customer can override the default per cart line via
+         an optional "timing" field on each cart item: "now" or "with_meal".
+         If the customer doesn't specify, the menu item's own default is used.
+         If the cart also contains kitchen items, "with_meal" lines are
+         attached to the SAME order as the kitchen items, so they naturally get
+         delivered at the same time as the food once it's ready. If the cart is
+         somehow only "with_meal" lines with no kitchen items at all, there's
+         nothing to time them against, so they safely fall back to immediate
+         delivery.
+
+    This same three-way split is also used by the "+1 More" reorder flow
+    (see api_reorder_item) so behavior stays consistent everywhere.
+    """
     r = Restaurant.query.filter_by(slug=slug).first_or_404()
     data = request.get_json()
     cart = data.get('cart', [])
@@ -1019,36 +1238,98 @@ def place_order(slug, table_number):
     # placed_by_name is only sent by the staff-assisted ordering screen (see
     # /take-order below) - regular customer QR orders never send this field.
     staff_name = (data.get('staff_name') or '').strip()[:60]
-    order = Order(
-        restaurant_id=r.id, table_number=table_number, status="received",
-        claimed_by=assignee, placed_by="staff" if staff_name else "customer",
-        placed_by_name=staff_name or None,
-    )
-    db.session.add(order)
-    db.session.flush()
+    placed_by = "staff" if staff_name else "customer"
 
+    kitchen_lines, immediate_lines, with_meal_lines = [], [], []
     for line in cart:
         menu_item = MenuItem.query.filter_by(id=line['id'], restaurant_id=r.id).first()
         if not menu_item:
             continue
-        db.session.add(OrderItem(
-            order_id=order.id,
-            name=menu_item.name,
-            price=menu_item.price,
-            quantity=int(line.get('quantity', 1)),
-            note=line.get('note', '')[:255],
-        ))
+        if menu_item.needs_prep:
+            kitchen_lines.append((menu_item, line))
+            continue
+
+        # For non-kitchen items, the customer's per-line choice (if provided)
+        # overrides the menu item's own default timing.
+        customer_choice = line.get('timing')  # "now" | "with_meal" | None
+        effective_timing = customer_choice if customer_choice in ("now", "with_meal") else menu_item.delivery_timing
+
+        if effective_timing == "with_meal":
+            with_meal_lines.append((menu_item, line))
+        else:
+            immediate_lines.append((menu_item, line))
+
+    if not kitchen_lines and not immediate_lines and not with_meal_lines:
+        return jsonify({"error": "No valid items in cart"}), 400
+
+    # If there ARE kitchen items, "with_meal" items ride along on that same
+    # order so they're delivered at the same moment as the food. If there are
+    # NO kitchen items to time against, fall back to immediate delivery instead
+    # of holding them indefinitely with nothing to wait for.
+    if kitchen_lines:
+        kitchen_lines = kitchen_lines + with_meal_lines
+    else:
+        immediate_lines = immediate_lines + with_meal_lines
+
+    kitchen_order_id, instant_order_id = None, None
+
+    if kitchen_lines:
+        kitchen_order = Order(
+            restaurant_id=r.id, table_number=table_number, status="received",
+            claimed_by=assignee, placed_by=placed_by, placed_by_name=staff_name or None,
+        )
+        db.session.add(kitchen_order)
+        db.session.flush()
+        for menu_item, line in kitchen_lines:
+            db.session.add(OrderItem(
+                order_id=kitchen_order.id, name=menu_item.name, price=menu_item.price,
+                quantity=int(line.get('quantity', 1)), note=line.get('note', '')[:255],
+            ))
+        kitchen_order_id = kitchen_order.id
+
+    if immediate_lines:
+        # Skip the kitchen entirely: create this order already "ready" so it goes
+        # straight to the runner's delivery queue, exactly like an instant refill.
+        instant_order = Order(
+            restaurant_id=r.id, table_number=table_number, status="ready",
+            ready_at=datetime.utcnow(), claimed_by=assignee, placed_by=placed_by,
+            placed_by_name=staff_name or None,
+        )
+        db.session.add(instant_order)
+        db.session.flush()
+        for menu_item, line in immediate_lines:
+            db.session.add(OrderItem(
+                order_id=instant_order.id, name=menu_item.name, price=menu_item.price,
+                quantity=int(line.get('quantity', 1)), note=line.get('note', '')[:255],
+            ))
+        instant_order_id = instant_order.id
+
     db.session.commit()
-    return jsonify({"order_id": order.id})
+
+    # The customer's status page primarily tracks the kitchen order (since that's
+    # the one with a wait time worth watching); if the cart was immediate-only,
+    # track that order instead. If it was mixed, also pass along the instant
+    # order id so the status page can show both as separate "tickets".
+    primary_order_id = kitchen_order_id or instant_order_id
+    return jsonify({"order_id": primary_order_id, "instant_order_id": instant_order_id if kitchen_order_id else None})
 
 
 @app.route('/order/status/<int:order_id>')
 def order_status_page(order_id):
     order = Order.query.get_or_404(order_id)
     r = Restaurant.query.get(order.restaurant_id)
+    # If the original cart was mixed (kitchen items + instant items like a cold
+    # drink), the instant items were placed as a separate order that skipped the
+    # kitchen - show that as a second, already-ready "ticket" on the same page
+    # instead of the customer wondering where their drink went.
+    instant_order_id = request.args.get('instant', type=int)
+    instant_order = None
+    if instant_order_id:
+        instant_order = Order.query.filter_by(id=instant_order_id, restaurant_id=r.id).first()
     return render_template(
         'order_status.html', order=order, r=r,
         table_number=order.table_number, request_types=REQUEST_TYPES,
+        instant_order=instant_order,
     )
 
 
@@ -1081,8 +1362,16 @@ def api_reorder_item(slug, table_number):
         flows through the normal kitchen -> wait time -> ready -> runner pipeline,
         exactly like a fresh order, because the kitchen genuinely has to make it.
       - If the item does NOT need prep (needs_prep=False, e.g. water, fountain soda,
-        bread basket): skip the kitchen entirely and send it straight to the runner
-        as an instant service request, since it's already available to grab.
+        bread basket, or even a "with_meal" item like ice cream/a cold drink):
+        skip the kitchen entirely and send it straight to the runner as an
+        instant service request.
+
+    Note this deliberately does NOT apply the "with_meal" hold-until-food-is-ready
+    logic used in place_order() for a fresh mixed cart. That logic exists to avoid
+    delivering a dessert/cold drink before food that's still cooking. A reorder is
+    a standalone, deliberate request made at a specific moment ("bring me another
+    ice cream now") - there's no new food order to hold it against, so immediate
+    delivery is the correct behavior here regardless of delivery_timing.
     """
     r = Restaurant.query.filter_by(slug=slug).first_or_404()
     data = request.get_json() or {}

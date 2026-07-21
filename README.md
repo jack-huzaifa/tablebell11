@@ -223,6 +223,219 @@ accurate revenue, correctly filtered by Today/Week/All Time, correctly flagged
 never-ordered items, and correctly kept one restaurant's analytics fully isolated from
 another's (tested and confirmed).
 
+## Augmented Reality Menu Preview
+
+Customers can see a life-size, rotatable 3D preview of a dish before ordering — directly
+from their phone's camera, with **no app download required**. This uses **WebAR**: on
+iPhone this is Apple's built-in "AR Quick Look," on Android it's Google's built-in
+"Scene Viewer" — both triggered from a normal web page, consistent with this product's
+core principle of zero-install customer experience.
+
+### Business model: a loyalty perk, not a day-one feature
+
+AR menu preview is **deliberately gated behind subscription tenure**, not offered to
+every restaurant from signup. A restaurant unlocks it only after being an **active,
+paying subscriber for 3 months or more** (configurable via `AR_UNLOCK_AFTER_MONTHS`) —
+trial time does not count. This is a real product/business decision, not just a
+marketing framing:
+
+- **Cost alignment**: real 3D food models cost real money per dish (see cost breakdown
+  below); gating the feature to proven, retained customers means that cost is only spent
+  where a relationship has already shown it will last, not on every trial signup.
+- **A natural upsell/re-engagement moment**: rather than a static subscription with no
+  reason to check back in, this creates a genuine "you've unlocked something new" touch
+  point a few months into the relationship — a good moment for you to reach out, offer
+  to help set it up, and reinforce the relationship without a hard sales pitch.
+- **Enforced server-side, not just hidden in the UI**: the eligibility check happens in
+  the backend route that saves AR model URLs, not just by hiding the form — confirmed by
+  testing that a direct POST request to the AR-update endpoint is silently rejected (and
+  the item's existing data left untouched) if the restaurant hasn't unlocked the feature,
+  even if someone bypasses the on-screen form entirely.
+- **A manual override flag** (`ar_unlock_override`) exists for exceptions — e.g. a demo
+  account, a goodwill gesture, or a specific negotiated deal — without changing the
+  default tenure-based rule for everyone else.
+
+### What this looks like in the app
+
+- **Before unlocking**: the Admin dashboard shows a locked message ("AR menu preview
+  unlocks as a loyalty perk after 3 months as an active subscriber, ~X months to go")
+  instead of the AR input fields, and the customer-facing menu never shows an AR button
+  for that restaurant, even if a model happens to be attached to an item behind the
+  scenes (e.g. the demo data described below).
+- **After unlocking**: the full AR controls appear in Admin, and eligible items show the
+  "View in 3D / AR" button to customers.
+- **Demo Mode testing tools**: since real tenure takes months to accrue, two buttons
+  exist for testing only (never exposed outside Demo Mode): "🧪 Demo: Unlock Now"
+  (instantly grants access, simulating 3+ months of subscription) and "🧪 Demo: Reset
+  Lock" (reverts back to the normal tenure gate) — useful for showing the full
+  locked-to-unlocked experience live in a demo without waiting months.
+
+### How it works
+
+1. The restaurant owner attaches a 3D model file to any menu item in the Admin dashboard
+   — a `.glb` file (used by Android) and/or a `.usdz` file (used by iPhone). Both are
+   optional and can be added, edited, or removed independently per item at any time.
+2. On the customer's menu page, any item with a model attached shows a **"📱 View in 3D
+   / AR"** button.
+3. Tapping it opens a modal with an interactive, rotatable 3D model (powered by Google's
+   open-source `model-viewer` web component — the same underlying technology used by
+   commercial AR menu products).
+4. A second button inside that modal — **"View on Your Table (AR)"** — launches the
+   phone's native AR viewer, placing a life-size version of the dish on the real table
+   using the camera, with no app install.
+
+### What's included as a working demo
+
+Every new signup's demo menu includes one item, **"Avocado Toast,"** with a real, live
+3D model already attached (sourced from Khronos Group's public glTF sample model
+library) — this lets anyone testing the app see the full AR flow working immediately,
+with zero setup.
+
+### The honest cost/scope reality (important for anyone evaluating this feature)
+
+Building this technical capability into the app was straightforward and is fully
+functional. **Populating it with real, professional 3D models for an entire restaurant
+menu is a separate, real cost** that this project does not eliminate:
+
+- Professional 3D food model creation (photogrammetry scanning of an actual dish)
+  typically costs **$49-500+ per dish** from specialized vendors, or requires the
+  restaurant/founder to learn a 3D scanning workflow using phone photos and free tools
+  (e.g. Meshroom, an open-source photogrammetry tool) — a real time investment, not a
+  quick task.
+- A full menu (30-40 items) professionally scanned would cost roughly **$3,000-12,000**
+  for a "hero dishes only" subset, or **$8,000-25,000** for full menu coverage, per
+  industry vendor pricing researched for this feature.
+- Industry-reported ROI for AR menus (20-26% average order value increase, per published
+  vendor data from companies like Kabaq) is a real, plausible mechanism — customers
+  ordering with more confidence — but these figures come from AR-menu vendors marketing
+  their own product, so should be treated as an upper-bound estimate, not a guarantee,
+  until validated independently.
+
+### Recommended rollout approach (not yet built, but the natural next step)
+
+Rather than 3D-scanning an entire menu upfront, a realistic path is: pick a restaurant's
+2-3 highest-margin or most visually distinctive "hero dishes," get those professionally
+scanned first (~$150-1,500 total), measure any real change in order patterns for those
+specific items using the existing Menu Analytics feature, and expand only if the data
+supports it. This keeps the upfront cost proportional to validated benefit rather than
+speculative.
+
+## Mixed Cart Splitting, and Getting Delivery Timing Right (Two Rounds of Fixes)
+
+### Round 1 bug: cold drinks clogging the kitchen queue
+
+When a customer's very first order mixed kitchen-made food (e.g. a pizza) with
+an already-stocked instant item (e.g. bottled water), the entire cart used to be
+dumped into a single order that always went to the Kitchen dashboard — meaning
+an item that needs zero preparation sat in the same queue as real food, waiting
+on a "wait time" it never needed.
+
+### Round 2 bug (found via real testing, more subtle): "instant" delivery isn't
+### always the RIGHT delivery, and the Round 1 fix over-corrected
+
+Fixing Round 1 by delivering every non-kitchen item immediately created a NEW,
+arguably worse problem: items like **ice cream or a cold drink** don't need
+kitchen prep, but delivering them the instant they're ordered means they arrive
+and then sit on the table for the entire kitchen wait time — an ice cream
+melting for 20 minutes while the pizza cooks, or a cold drink going warm before
+the food even shows up. "Doesn't need the kitchen" and "should be delivered
+immediately" are two different questions that got incorrectly treated as one.
+
+### The real fix: a per-item delivery timing choice
+
+Every non-kitchen menu item now has an explicit **delivery timing** setting,
+configurable by the owner in Admin (and shown clearly with a badge in the item
+list):
+- **"Right away"** — for items where early delivery has no downside (water,
+  napkins, cutlery, condiments).
+- **"Hold and deliver together with the food"** — for anything perishable or
+  temperature-sensitive (cold drinks, ice cream, desserts) that would go warm,
+  melt, or feel wrong served before the meal. These items are automatically
+  attached to the SAME order as the kitchen items in that cart, so they are only
+  delivered once the kitchen marks the food ready — arriving at the table at the
+  same moment as the food, not before.
+- **Fallback behavior**: if a "hold and deliver together" item is ordered with
+  no kitchen items at all in the same cart (nothing to time it against), it
+  safely falls back to immediate delivery rather than being held indefinitely.
+- This distinction only applies to a customer's **initial** order. The "+1 More"
+  mid-meal reorder flow deliberately does NOT hold items — if someone explicitly
+  asks for another ice cream mid-meal, that's a standalone request made at a
+  specific moment, and there's no new food order to time it against, so it's
+  delivered right away regardless of the item's configured timing.
+
+The demo menu seeded on every new signup includes both cases out of the box for
+testing: **Iced Tea** and **Vanilla Ice Cream** are pre-configured as "hold and
+deliver together," while **Water** is "deliver right away" — so the distinction
+is demoable with zero setup.
+
+**Tested and confirmed (both rounds):**
+- A mixed cart (pizza + ice cream, both "hold with meal") correctly created a
+  SINGLE order — confirmed the ice cream did NOT appear early on the Runner
+  screen, and instead showed the exact same wait-time countdown as the pizza
+  (tested with a 20-minute wait, matching the exact scenario that surfaced this
+  bug) and only reached the Runner once the whole order was marked ready.
+- A mixed cart (pizza + water, "deliver right away") correctly split into two
+  orders — the pizza went to Kitchen only, the water appeared instantly on the
+  Runner, confirming the immediate-delivery path still works correctly
+  alongside the new hold logic.
+- Both patterns tested simultaneously, on different tables, without interfering
+  with each other.
+- Edge case tested: ordering a "hold with meal" item completely alone (no food
+  in the cart) correctly fell back to immediate delivery instead of being held
+  forever with nothing to wait for.
+- A kitchen-only cart and a plain instant-only cart both continued to work
+  exactly as before, with no unnecessary extra orders created.
+- The Admin toggle to flip an item between "deliver right away" and "hold for
+  the meal" was tested and confirmed working, with the correct badge updating
+  immediately.
+- Menu Analytics re-verified to correctly count every item from every order
+  type (kitchen, immediate, hold-for-meal, and mixed combinations) with no
+  double-counting or missing items.
+
+## Round 3 Fix: Delivery Timing Is a Customer Choice, Not Just an Owner Default
+
+**The gap found after Round 2:** locking "hold and deliver with the meal" as a
+fixed default per menu item assumed there's only ever one correct timing for a
+given item. That's not true in practice — the same iced tea might be wanted
+**immediately** by a couple who want a drink to sip while chatting and waiting
+for their food, or **with the meal** by someone who wants it freshly poured
+alongside their food. That's a preference that varies by customer and by
+moment, not a fixed property of the menu item.
+
+**The fix:** the restaurant owner's per-item setting ("Right away" vs. "Hold
+and deliver together with the food") is now treated as a **default**, not a
+hard rule. On the customer's menu page, any item configured as "hold with
+meal" shows a small, explicit choice once it's added to the cart:
+- **"⏱ Bring with my food"** (pre-selected, matches the owner's default)
+- **"⚡ Bring it now"** (override, for exactly the "we want to talk before the
+  food arrives" scenario)
+
+This choice is sent per cart line, so a customer can order a pizza with one
+drink they want immediately and another item they're happy to have arrive with
+the food, all in the same order. If no explicit choice is sent at all (e.g. a
+staff-assisted order placed through the "Take Order" screen, which doesn't yet
+have this picker), the system correctly falls back to that menu item's own
+configured default rather than guessing or erroring out.
+
+**Tested and confirmed:**
+- Ordered pizza + iced tea with the customer explicitly choosing "Bring it
+  now" for the iced tea — confirmed the pizza went to the Kitchen alone and
+  the iced tea was delivered to the Runner immediately, correctly overriding
+  the item's own "with_meal" default.
+- Ordered the same combination again with the customer explicitly keeping the
+  default ("with_meal") — confirmed both items were correctly bundled into a
+  single order, arriving together once the food was ready.
+- Sent an order with no timing field specified at all — confirmed it correctly
+  fell back to the menu item's own configured default ("with_meal" for iced
+  tea), so older clients or the staff-assisted flow still behave sensibly.
+- Confirmed the timing choice buttons appear on the customer menu ONLY for
+  items actually configured as "with_meal," and correctly do NOT appear for
+  "immediate" items (water) or kitchen-made items (pizza).
+- Re-confirmed the "+1 More" mid-meal reorder flow is intentionally unaffected
+  by this change — a standalone reorder request is always delivered right
+  away regardless of the item's configured timing, since there's no new food
+  order to time it against at that point.
+
 ## Accessibility: Customers Without Smartphones (Elderly Guests, etc.)
 
 A real gap in a pure "QR-only" system: it excludes anyone without a smartphone — elderly
@@ -427,6 +640,24 @@ integration pattern (Checkout + webhooks). It runs in one of two modes automatic
   the identical kitchen-bell/wait-time/runner pipeline as self-service orders; confirmed
   order counts/revenue merge correctly with phone-placed orders in Analytics regardless
   of how the order was entered; validation and staff-login security tested
+- ✅ **Augmented reality menu preview** (no app download, WebAR via AR Quick Look/Scene
+  Viewer): owners can attach/edit/remove a 3D model per menu item; customers see a "View
+  in 3D / AR" button that opens an interactive, rotatable preview and can launch native
+  AR to place a life-size dish on their table; tested end-to-end with a real, working
+  public 3D model (Khronos Group's glTF sample set) included by default on every new
+  signup's demo menu; add/update/remove all confirmed working; restaurant-isolated same
+  as other menu edits (confirmed a second restaurant cannot view or modify another's AR
+  models). Full cost/scope honesty notes for populating a real menu with professional 3D
+  models are documented separately above.
+- ✅ **AR unlocked as a 3-month loyalty perk, not a day-one feature**: tested end-to-end
+  that a brand-new signup cannot see or set AR models (confirmed both the Admin UI shows
+  a locked message and the customer menu shows no AR button, even for an item with a
+  model already attached behind the scenes); confirmed the "Demo: Unlock Now" tool
+  correctly grants access and the AR button/controls immediately appear; confirmed
+  "Demo: Reset Lock" correctly reverts to the locked state; **security-tested that the
+  gate is enforced server-side** — a direct POST to the AR-update endpoint while locked
+  is rejected and the item's data is left untouched, confirmed by inspecting the
+  database directly, not just the rendered page.
 
 ---
 
